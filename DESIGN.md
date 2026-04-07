@@ -463,9 +463,46 @@ Mock 数据包含：
 
 ## Change Log
 
-### 2026-04-07 Bug Fixes and E2E Tests
+### 2026-04-07 — Output Token 优化回归修复 + E2E 测试
 
-Bug fixes after output token optimization: maxTokens adjusted (generate=8192, review=6144), openai-compat system msg fix, genChatSection always visible, chat AI sync to main editors (looksLikeResume/looksLikeReview), Gemini default model changed to gemini-3.1-flash-lite-preview. E2E tests: 16/16 passed.
+**概述**：修复 output token 优化引入的多个回归 bug，完成全路由端到端 API 测试（16/16 通过）。
+
+**Bug Fixes**：
+
+| Bug | 原因 | 修复 |
+|-----|------|------|
+| 生成的简历/求职信被截断 | maxTokens 设为 4096 不够 | generate → 8192, review → 6144 |
+| OpenAI-compat system prompt 不生效 | `opts.system` 在 `opts.messages` 存在时被跳过 | 改为检查 `messages[0]?.role !== 'system'` |
+| genChatSection 不显示 | 被条件性隐藏 | 改为始终可见（与 review chat 一致） |
+| Chat AI 更新的简历/review 不同步到主编辑区 | 仅显示在对话区 | 新增 `looksLikeResume()` / `looksLikeReview()` 启发式检测，自动同步 |
+| Gemini 1.5 Flash 返回 404 | 模型已废弃 | 默认模型改为 `gemini-3.1-flash-lite-preview` |
+| test-e2e.mjs 泄露 API Key 到 GitHub | 硬编码 key | 改为 `process.env.GEMINI_KEY` 环境变量 |
+
+**最终 maxTokens 配置表**：
+| 路由 | maxTokens |
+|------|-----------|
+| generate | 8192 |
+| review | 6144 |
+| reviewer (multi) | 3072 |
+| merge (multi) | 4096 |
+| apply-review | 4096 |
+| chat (review) | 4096 |
+| chat (generator) | 4096 |
+| chat (html) | 8192 |
+| generate-html | 8192 |
+| extract-jd-info | 256 |
+
+**E2E 测试结果**（gemini-3.1-flash-lite-preview，16/16 通过）：
+- Mock 模式 7 路由全部通过
+- Real API 9 项全部通过：extract-jd-info、generate（含/不含求职信+备注）、review、apply-review（diff 格式正确）、chat（review/generator 类型）、generate-html（body-only 输出正确）
+
+**改动文件**：
+- `server/routes/api.js` — maxTokens 调整
+- `server/services/openai-compat.js` — system message 条件修复
+- `server/services/gemini.js` — 默认模型改为 `gemini-3.1-flash-lite-preview`
+- `src/main.js` — 新增 `looksLikeResume()` / `looksLikeReview()` 启发式同步
+- `index.html` — genChatSection 移除 `display:none`
+- `test-e2e.mjs` — 移除硬编码 API Key
 
 ### 2026-04-06 — Output Token 优化
 
@@ -475,12 +512,12 @@ Bug fixes after output token optimization: maxTokens adjusted (generate=8192, re
 
 | 优化项 | 说明 | Output 节省 |
 |--------|------|------------|
-| maxTokens 收紧 | generate 16K→4K, review 8K→4K, reviewer 8K→3K, merge 8K→4K, html 新增 8K | 防护性 |
+| maxTokens 收紧 | generate 8K, review 6K, reviewer 3K, merge 4K, apply-review 4K, chat 4K/4K/8K, html 8K | 防护性 |
 | Review prompt 精简 | 合并"需要修改的问题"和"具体修改建议"为一节，限制每节条目数（≤8条），REVIEW_SYSTEM 加"不要逐行改写" | ~40% |
 | 多模型 review 精简 | 个别 reviewer 用精简 prompt（`getReviewPromptConcise`：仅评分+问题+建议），不显示个别结果只显示合并 | ~54% |
 | Merge prompt 拆分 | `getReviewMergePrompt` 返回 `{system, user}`，新增 `MERGE_SYSTEM`，启用 Anthropic prompt caching | 启用 cache |
 | HTML CSS 模板 | 预置 `HTML_CSS_TEMPLATE` 常量，AI 只输出 `<body>` 内 HTML，前端组装完整文档 | ~30% |
-| Chat 分型 system prompt | `/chat` 路由根据 `chatType`（review/generator/html）设不同 system prompt 和 maxTokens（2K/4K/8K） | ~33% |
+| Chat 分型 system prompt | `/chat` 路由根据 `chatType`（review/generator/html）设不同 system prompt 和 maxTokens（4K/4K/8K） | ~33% |
 | Apply-review diff 模式 | 新增 `/api/apply-review` 路由，AI 输出 `[REPLACE]<<<old>>>new[/REPLACE]` 格式修改指令，前端解析应用 diff，失败自动 fallback 全量重生成 | ~79% |
 | generateNotes 参数 | apply-review 时关闭 AI 备注输出（`generateNotes: false`） | ~200-400 tokens |
 
