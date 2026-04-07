@@ -463,6 +463,10 @@ Mock 数据包含：
 
 ## Change Log
 
+### 2026-04-07 Bug Fixes and E2E Tests
+
+Bug fixes after output token optimization: maxTokens adjusted (generate=8192, review=6144), openai-compat system msg fix, genChatSection always visible, chat AI sync to main editors (looksLikeResume/looksLikeReview), Gemini default model changed to gemini-3.1-flash-lite-preview. E2E tests: 16/16 passed.
+
 ### 2026-04-06 — Output Token 优化
 
 **概述**：在 input token 优化（节省 75-87%）基础上，对 output token 进行系统性优化。Output token 单价是 input 的 3-5 倍，标准全流程 output 从 ~12300 降至 ~5900 tokens（~52%）。
