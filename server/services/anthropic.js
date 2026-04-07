@@ -18,6 +18,18 @@ export async function callAnthropic(prompt, onChunk, opts = {}) {
 
   let messages = opts.messages || [{ role: 'user', content: prompt }];
 
+  // If userBlocks provided (for cache optimization), convert first user message to content blocks
+  if (!opts.messages && opts.userBlocks) {
+    messages = [{
+      role: 'user',
+      content: opts.userBlocks.map(block => {
+        const part = { type: 'text', text: block.text };
+        if (block.cache) part.cache_control = { type: 'ephemeral' };
+        return part;
+      }),
+    }];
+  }
+
   // Convert multimodal content to Anthropic format
   messages = messages.map(m => {
     if (typeof m.content === 'string') return m;
@@ -25,7 +37,7 @@ export async function callAnthropic(prompt, onChunk, opts = {}) {
       return {
         role: m.role,
         content: m.content.map(part => {
-          if (part.type === 'text') return { type: 'text', text: part.text };
+          if (part.type === 'text') return part; // preserve existing text blocks (including cache_control)
           if (part.type === 'file') {
             if (part.mimeType === 'application/pdf') {
               return { type: 'document', source: { type: 'base64', media_type: part.mimeType, data: part.data } };

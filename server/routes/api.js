@@ -209,8 +209,8 @@ router.post('/generate', async (req, res) => {
   try {
     const { model, jd, baseResume, resumeLibrary, instructions, generateCoverLetter, previouslySubmitted, generateNotes } = req.body;
     const caller = getModelCaller(model);
-    const { system, user } = getResumeGenerationPrompt({ jd, originalResume: baseResume, resumeLibrary, instructions, previouslySubmitted, generateCoverLetter, generateNotes });
-    await caller(user, chunk => sendSSE(res, { type: 'chunk', text: chunk }), { system, maxTokens: 8192 });
+    const { system, user, userBlocks } = getResumeGenerationPrompt({ jd, originalResume: baseResume, resumeLibrary, instructions, previouslySubmitted, generateCoverLetter, generateNotes });
+    await caller(user, chunk => sendSSE(res, { type: 'chunk', text: chunk }), { system, maxTokens: 8192, userBlocks });
     sendSSE(res, { type: 'done' });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
@@ -227,8 +227,8 @@ router.post('/review', async (req, res) => {
   try {
     const { model, jd, baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted } = req.body;
     const caller = getModelCaller(model);
-    const { system, user } = getReviewPrompt({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted });
-    await caller(user, chunk => sendSSE(res, { type: 'chunk', text: chunk }), { system, maxTokens: 6144 });
+    const { system, user, userBlocks } = getReviewPrompt({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted });
+    await caller(user, chunk => sendSSE(res, { type: 'chunk', text: chunk }), { system, maxTokens: 6144, userBlocks });
     sendSSE(res, { type: 'done' });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
@@ -245,13 +245,13 @@ router.post('/review-multi', async (req, res) => {
   setupSSE(res);
   try {
     const { models, orchestratorModel, jd, baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted } = req.body;
-    const { system, user } = getReviewPromptConcise({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted });
+    const { system, user, userBlocks } = getReviewPromptConcise({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted });
 
     // Run all reviewers in parallel (concise format, no SSE streaming for individual results)
     sendSSE(res, { type: 'chunk', text: '正在并行调用多个评审模型...\n\n' });
     const results = await Promise.all(models.map(async (model) => {
       const caller = getModelCaller(model);
-      const result = await caller(user, () => {}, { system, maxTokens: 3072 });
+      const result = await caller(user, () => {}, { system, maxTokens: 3072, userBlocks });
       return { model, result };
     }));
 

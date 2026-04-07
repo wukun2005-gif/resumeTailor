@@ -869,20 +869,29 @@ async function doReview() {
 /**
  * Parse AI's diff output into an array of {old, new} replacement pairs.
  * Format: [REPLACE]<<<old text>>>new text[/REPLACE]
+ * Tolerates variations: extra whitespace, missing newlines, markdown fences.
  */
 function parseDiffOutput(text) {
   const diffs = [];
-  const regex = /\[REPLACE\]\s*\n<<<\n([\s\S]*?)\n>>>\n([\s\S]*?)\n\[\/REPLACE\]/g;
+  // Primary regex: strict format with newlines
+  const strict = /\[REPLACE\]\s*\n<<<\n([\s\S]*?)\n>>>\n([\s\S]*?)\n\[\/REPLACE\]/g;
   let match;
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = strict.exec(text)) !== null) {
     diffs.push({ old: match[1], new: match[2] });
+  }
+  if (diffs.length > 0) return diffs;
+
+  // Fallback regex: more lenient (optional newlines, whitespace around delimiters)
+  const lenient = /\[REPLACE\]\s*<<<\s*([\s\S]*?)\s*>>>\s*([\s\S]*?)\s*\[\/REPLACE\]/g;
+  while ((match = lenient.exec(text)) !== null) {
+    if (match[1].trim()) diffs.push({ old: match[1].trim(), new: match[2].trim() });
   }
   return diffs;
 }
 
 /**
  * Apply diffs to the resume text. Returns { result, applied, failed }.
- * Tries exact match first, then trimmed match.
+ * Tries exact match first, then trimmed, then whitespace-normalized.
  */
 function applyDiffs(resume, diffs) {
   let result = resume;
@@ -893,13 +902,29 @@ function applyDiffs(resume, diffs) {
       result = result.replace(d.old, d.new);
       applied++;
     } else {
-      // Fuzzy: trim whitespace and try again
+      // Fuzzy 1: trim whitespace and try again
       const trimOld = d.old.trim();
       if (trimOld && result.includes(trimOld)) {
         result = result.replace(trimOld, d.new.trim());
         applied++;
       } else {
-        failed++;
+        // Fuzzy 2: normalize internal whitespace (collapse multiple spaces/newlines)
+        const normalizeWs = s => s.replace(/\s+/g, ' ').trim();
+        const normalizedOld = normalizeWs(d.old);
+        // Find a matching region in the resume by normalizing each candidate
+        const lines = result.split('\n');
+        let found = false;
+        for (let i = 0; i < lines.length && !found; i++) {
+          for (let j = i + 1; j <= Math.min(i + 10, lines.length) && !found; j++) {
+            const candidate = lines.slice(i, j).join('\n');
+            if (normalizeWs(candidate) === normalizedOld) {
+              result = result.replace(candidate, d.new.trim());
+              applied++;
+              found = true;
+            }
+          }
+        }
+        if (!found) failed++;
       }
     }
   }
@@ -1166,11 +1191,11 @@ async function doGenerateHtml() {
     els.htmlStatus.textContent = `HTML 已下载: ${suggestedName}（点击Chrome下载栏中的文件即可预览）`;
     els.htmlStatus.className = 'status-text success';
 
-    // Show HTML chat section and init context
+    // Show HTML chat section and init context (use body-only content, not full HTML with CSS)
     els.htmlChatSection.style.display = '';
     htmlChatMessages = [
       { role: 'user', content: `请把以下简历生成HTML格式。\n\n简历文本:\n${resume}` },
-      { role: 'assistant', content: htmlContent },
+      { role: 'assistant', content: bodyContent },
     ];
   } catch (e) {
     els.htmlStatus.textContent = '生成失败: ' + e.message;

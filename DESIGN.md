@@ -463,6 +463,30 @@ Mock 数据包含：
 
 ## Change Log
 
+### 2026-04-07 — Token 消费地毯式审计 + 优化（第三轮）
+
+**概述**：按"上下文精简/减少冗余调用/缓存复用/避免重复读取"四方向对全部 7+条 AI 路由逐一审计。在保留用户要求的完整 context（library、JD、instructions、AI 备注）前提下，实施剩余可优化项。
+
+**优化项**：
+
+| 优化项 | 说明 | 节省 |
+|--------|------|------|
+| HTML chat seed 精简 | seed assistant 改用 AI body 输出（去除 CSS 模板 + DOCTYPE 等外层包装），用户从不看 HTML 源码 | ~400tok/轮 |
+| HTML prompt CSS 描述精简 | 从详细列举字体/字号/行距改为一句话概述 | ~80tok |
+| Anthropic user message cache | `callAnthropic()` 支持 `userBlocks` 参数，对 library digest 和 previouslySubmitted 加 `cache_control: { type: "ephemeral" }` | 第 2 次+调用大块内容 90% cache 折扣 |
+| Diff 解析鲁棒性 | `parseDiffOutput()` 增加 lenient fallback regex（容忍可选换行/空格）；`applyDiffs()` 增加 whitespace-normalized 行级模糊匹配 | 减少 fallback 全量重生成频率 |
+
+**改动文件**：
+- `src/main.js` — htmlChatMessages seed 改用 bodyContent; parseDiffOutput 增加 lenient regex; applyDiffs 增加 whitespace-normalized 匹配
+- `server/prompts/templates.js` — HTML CSS 描述精简; getResumeGenerationPrompt/getReviewPrompt/getReviewPromptConcise 返回 `userBlocks` 数组（标记可缓存块）
+- `server/services/anthropic.js` — callAnthropic 支持 `opts.userBlocks`，自动转为 Anthropic content blocks + cache_control
+- `server/routes/api.js` — generate/review/review-multi 路由传递 userBlocks 到 caller
+
+**审计结论**：
+- `/extract-jd-info`、`/generate`、`/review`、`/review-multi`、`/apply-review`、`/chat(review/gen)`：input/output 均已达合理下限
+- Output token：全路由在上轮优化中已达下限（标准流程 ~12300→~5900, 省 52%），无额外空间
+- 主要剩余收益来源：Anthropic prompt caching 和 diff 模式可靠性提升
+
 ### 2026-04-07 — Output Token 优化回归修复 + E2E 测试
 
 **概述**：修复 output token 优化引入的多个回归 bug，完成全路由端到端 API 测试（16/16 通过）。

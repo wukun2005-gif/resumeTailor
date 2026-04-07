@@ -1,188 +1,155 @@
-# 简历定制助手 — 产品需求文档 (PRD)
+# Resume Tailor — AI多Agent简历定制助手
 
 > 2026-04, wukun2005@gmail.com
 
-👉 **[点击这里查看项目的详细设计文档 (DESIGN.md)](./DESIGN.md)**
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
+![Node](https://img.shields.io/badge/node-%3E%3D18-green)
+![AI Models](https://img.shields.io/badge/AI-Multi--Model-purple)
 
 ---
 
 ## 目录
 
-1. [背景与痛点](#1-背景与痛点)
-2. [产品定义](#2-产品定义)
-3. [成功指标](#3-成功指标)
-4. [用户画像](#4-用户画像)
-5. [核心工作流](#5-核心工作流)
-6. [功能说明](#6-功能说明)
-7. [多模型配置系统](#7-多模型配置系统)
-8. [使用指南](#8-使用指南)
-9. [安全与隐私](#9-安全与隐私)
-10. [技术约束与限制](#10-技术约束与限制)
-11. [术语表](#11-术语表)
+1. [Executive Summary](#1-executive-summary)
+2. [问题陈述与用户价值](#2-问题陈述与用户价值)
+3. [核心功能：多Agent跨应用编排](#3-核心功能多agent跨应用编排)
+4. [AI不确定性管理：约束、降级与护栏](#4-ai不确定性管理约束降级与护栏)
+5. [Token成本优化战略](#5-token成本优化战略)
+6. [使用场景](#6-使用场景)
+7. [安全与隐私](#7-安全与隐私)
+8. [产品路线图](#8-产品路线图)
+9. [快速开始](#9-快速开始)
+10. [术语表](#10-术语表)
+11. [设计文档](./DESIGN.md)
 
 ---
 
-## 1. 背景与痛点
+## 1. Executive Summary
 
-### 1.1 现状
+**Resume Tailor** 是一个本地运行的AI多Agent简历定制应用。它通过编排多个AI Agent（生成、评审、格式转换、协调），将求职者从"在多个AI工具之间反复复制粘贴"的45分钟手工流程，缩短为"一个应用、一条流水线"的15分钟自动化流程。
 
-求职者在针对不同岗位的 JD 定制简历时，需要在多个 AI 工具之间反复切换、复制粘贴：
+### 核心设计理念
 
-```mermaid
-flowchart LR
-    LIB[(本地简历素材库)] -->|手动复制粘贴| A
-    LIB -->|手动复制粘贴| B
-    LIB -->|手动复制粘贴| C
-
-    A[AI工具A<br/>生成简历] -->|手动复制JD+简历| B[AI工具B<br/>Review]
-    B -->|手动复制JD+简历| C[AI工具C<br/>Review]
-    C -->|手动复制简历| D[AI工具C<br/>生成HTML]
-    B --> E[人工阅读<br/>手动修改简历]
-    C --> E
-    E -->|手动粘贴修改后的简历| A
-```
-
-**痛点**：
-- 每次定制一份简历需要在 3-4 个 AI 窗口之间来回复制粘贴
-- JD + 简历素材库 + 指令文本量大，每次都要从素材库中手动复制重复输入
-- 多轮修改时 AI 会丢失上下文，导致修改不连贯
-- 生成的 HTML 需要手动从聊天记录中复制保存
-- 没有统一的文件管理，生成的简历散落各处，没有回写到素材库
-
-### 1.2 期望
-
-**一个 APP，一个流程，从 JD 到 PDF。素材库自动读取，生成的文件自动回写。**
-
----
-
-## 2. 产品定义
-
-### 2.1 一句话描述
-
-**简历定制助手**是一个本地运行的 Web 应用，用 AI 多 Agent 协作自动完成「JD → 定制简历/求职信 → 评审修改 → HTML 导出」全流程。
-
-### 2.2 设计原则
-
-| 原则 | 说明 |
+| 原则 | 实现 |
 |------|------|
-| 隐私第一 | 纯本地运行，凭证加密存储，简历内容不经过无关第三方 |
-| 省 Token | Mock 模式先测流程；HTML→PDF 用户手动完成；无预览消耗 |
-| 不卡机器 | Node.js 内存上限 512MB，适配老款笔记本 |
-| 朴素 UI | 没有动画/渐变/流光效果，功能优先 |
-| 一键启动 | `npm run dev` + 打开浏览器即可使用 |
+| **隐私优先** | 纯本地运行，API Key用AES-256-GCM加密，简历内容不经过任何未授权第三方 |
+| **Token经济** | 三阶段优化实现75-87% input + 52% output token节省，仿真模式零成本验证流程 |
+| **不卡机器** | Node.js限制512MB内存，适配老款笔记本（四核i7/16GB） |
+| **朴素UI** | 无动画、无渐变、无视觉特效，功能优先 |
+| **一键启动** | `npm run dev` → 打开浏览器 → 开始工作 |
 
-### 2.3 产品边界
+### 产品边界
 
-| 简历定制助手负责 | 不负责 |
-|-----------------|--------|
-| 自动读取本地简历素材库，作为生成/评审的事实基础 | HTML → PDF 转换（用户在浏览器手动打印） |
-| 根据 JD 生成定制简历和求职信 | 简历素材库内容管理（用户自行维护本地文件夹） |
-| 多 AI 模型并行评审 | |
-| 与 AI 多轮对话修改简历 | |
-| 简历 → HTML 格式转换 | |
-| 生成的文件自动命名并保存回素材库 | |
-| 多供应商 AI 模型配置 | |
-| 跨投递一致性检查：同公司多次投递自动约束事实一致 | |
+| Resume Tailor 做什么 | 不做什么 |
+|---------------------|----------|
+| 根据JD自动生成定制简历和求职信 | HTML→PDF转换（用户在浏览器手动打印） |
+| 多模型并行评审并打分 | 管理素材库内容本身 |
+| 跨投递一致性自动检查 | 自动投递简历（V3规划） |
+| 多轮AI辅助编辑（带上下文记忆） | ATS评分预测 |
+| 导出可打印的HTML文件 | 简历模板市场 |
+| 灵活配置多供应商AI模型 | 长期职业规划 |
 
 ---
 
-## 3. 成功指标
+## 2. 问题陈述与用户价值
 
-| 指标 | 衡量方式 | 当前状态 |
-|------|---------|---------|
-| **端到端生成时间** | 从粘贴 JD 到拿到可投递终稿的耗时 | 可衡量（人工计时） |
-| **手动修改幅度** | AI 输出终稿后，用户还需手动修改的比例 | 可衡量（人工判断） |
-| **面试转化率** | 通过简历筛查获得面试机会的比例 | 终极 business value；目前无法由 APP 自动衡量，需用户自行跟踪 |
-
----
-
-## 4. 用户画像
+### 2.1 用户画像
 
 | 维度 | 描述 |
 |------|------|
-| 身份 | 求职者，有一定技术背景，能使用命令行 |
-| 设备 | macOS 笔记本 |
-| AI 工具 | 付费 AI API 代理（如 Jiekou.ai、OpenRouter.ai）和/或免费 Google AI Studio |
-| 简历习惯 | 维护一个本地简历素材库文件夹，每次投递不同岗位时定制简历 |
-| 核心诉求 | 减少重复性复制粘贴操作，一站式完成简历定制全流程 |
+| 身份 | 有技术背景的求职者，能使用命令行 |
+| 设备 | macOS笔记本（包括较老的硬件） |
+| AI获取方式 | 付费API代理平台和/或免费大模型平台 |
+| 简历习惯 | 维护本地素材库文件夹，按JD定制简历 |
+| 预算敏感度 | 高度关注AI token成本——每一分钱都重要 |
+
+### 2.2 用户痛点
+
+| # | 痛点 | 影响 |
+|---|------|------|
+| 1 | **多工具切换**：在多个AI聊天工具之间反复复制粘贴JD、素材库、指令 | 每份简历浪费30+分钟 |
+| 2 | **上下文丢失**：多轮编辑中AI忘记之前的修改上下文 | 修改前后不一致 |
+| 3 | **版本管理混乱**：向同一公司投递多个职位时，简历之间出现事实矛盾（Title不一致、年份冲突） | HR直接拉黑 |
+| 4 | **质量无保障**：单一AI生成无法多维度交叉评审 | 关键词堆砌、过度包装难以发现 |
+| 5 | **成本不可控**：不知道一次简历定制要花多少token，用完才知道花了多少钱 | 预算焦虑 |
+
+### 2.3 工作流对比：Before vs. After
+
+```mermaid
+flowchart LR
+    subgraph BEFORE ["改造前：手工流程 ❌"]
+        direction TB
+        B1["打开AI工具A"] --> B2["粘贴JD+素材库+指令"]
+        B2 --> B3["复制结果到AI工具B做Review"]
+        B3 --> B4["复制结果到AI工具C做Review"]
+        B4 --> B5["人工阅读Review，手动修改"]
+        B5 --> B6["粘贴回AI工具A重新生成"]
+        B6 --> B7["粘贴到AI工具C生成HTML"]
+        B7 --> B8["复制HTML代码，保存为文件"]
+        B8 --> B9["浏览器打开，打印PDF"]
+    end
+
+    subgraph AFTER ["改造后：Resume Tailor ✅"]
+        direction TB
+        A1["粘贴JD"] --> A2["点击'生成简历'"]
+        A2 --> A3["在编辑区修改，点击'开始Review'"]
+        A3 --> A4["点击'采纳并更新'"]
+        A4 --> A5["点击'生成HTML并下载'"]
+        A5 --> A6["浏览器打印PDF"]
+    end
+
+    BEFORE ~~~ AFTER
+
+    style BEFORE fill:#fef2f2,stroke:#ef4444
+    style AFTER fill:#f0fdf4,stroke:#22c55e
+```
+
+**关键改善**：
+- **步骤**：3个工具×9步手动操作 → 1个应用×6次点击
+- **上下文**：每次重新输入 → 自动管理（素材库、JD、指令、对话历史全部自动维护）
+- **一致性**：无 → 自动检测同公司历史投递并注入事实约束
+
+### 2.4 成功指标
+
+| 指标 | 衡量方式 | 目标 |
+|------|---------|------|
+| 端到端耗时 | 从粘贴JD到导出PDF | < 15分钟（原45+分钟） |
+| 人工修改比例 | AI输出中需要人工修改的占比 | < 20% |
 
 ---
 
-## 5. 核心工作流
+## 3. 核心功能：多Agent跨应用编排
 
-### 5.1 端到端流程
+### 3.1 为什么要做多Agent编排？
 
-```mermaid
-flowchart TD
-    START([用户打开 APP]) --> CONFIG{首次使用?}
-    CONFIG -->|是| SETTINGS[配置 AI 模型连接<br/>和 Agent 分配]
-    CONFIG -->|否| INPUT
-    SETTINGS --> INPUT
+传统的"一个AI聊天窗口包办一切"有三个根本问题：
 
-    LIB[(本地简历素材库<br/>用户自行维护)] -->|自动读取文件列表<br/>全部素材供 AI 参考| INPUT
-    INPUT[输入 JD + 选择基础简历<br/>+ 编写生成指令<br/>+ 勾选是否生成求职信]
-    INPUT -->|点击 生成简历| CONSIST_CHK
+1. **角色冲突**：让同一个AI既生成简历又评审自己的作品，相当于让作者当自己的编辑——它倾向于认可自己的输出
+2. **模型局限**：不同AI模型各有所长——有的擅长写作，有的擅长挑错，有的性价比高——单一模型无法覆盖所有需求
+3. **用户失控**：一个黑盒流程中，用户无法在关键节点介入审查和修改
 
-    CONSIST_CHK{素材库中有<br/>同公司历史投递?}
-    CONSIST_CHK -->|是| CONSIST_HINT[显示黄色提示<br/>拼接历史投递内容<br/>注入一致性约束]
-    CONSIST_CHK -->|否| GEN
-    CONSIST_HINT --> GEN
-
-    GEN[Generator Agent<br/>生成定制简历/求职信]
-    GEN -->|自动保存 .txt| LIB
-    GEN --> EDIT[用户阅读编辑简历<br/>处理 AI 备注和确认事项<br/>可与 Generator 对话]
-    EDIT --> REVIEW_Q{需要 Review?}
-
-    REVIEW_Q -->|是| REVIEW[Reviewer Agent 并行评审 + 打分<br/>输入包含素材库全文]
-    REVIEW_Q -->|否| HTML_Q
-
-    REVIEW --> READ_REVIEW[用户阅读评审意见<br/>可与 AI 讨论细节]
-    READ_REVIEW --> APPLY_Q{采纳修改?}
-
-    APPLY_Q -->|是| APPLY[Generator Agent<br/>基于评审意见微调<br/>保留用户手动编辑]
-    APPLY_Q -->|否| MANUAL[用户手动修改简历]
-
-    APPLY --> EDIT
-    MANUAL --> REVIEW_Q
-
-    HTML_Q{导出 HTML?}
-    HTML_Q -->|是| HTML[HTML Converter Agent<br/>生成打印版 HTML]
-    HTML_Q -->|否| DONE
-
-    HTML --> DOWNLOAD[浏览器下载 HTML 文件<br/>可上传 PDF 让 AI 调试排版]
-    DOWNLOAD --> PDF[用户在浏览器中<br/>打开 HTML → 打印为 PDF]
-    PDF --> DONE([完成])
-
-    style LIB fill:#fff3cd,stroke:#ffc107
-    style CONSIST_HINT fill:#fff3cd,stroke:#ffc107
-    style GEN fill:#e0f2fe,stroke:#0ea5e9
-    style REVIEW fill:#fef3c7,stroke:#f59e0b
-    style APPLY fill:#e0f2fe,stroke:#0ea5e9
-    style HTML fill:#dcfce7,stroke:#22c55e
-```
-
-### 5.2 多 Agent 协作
+多Agent编排的解决思路是 **拆分职责、各专其能、用户掌控关键决策点**：
 
 ```mermaid
 flowchart TD
-    LIB[(本地简历素材库)] -->|自动读取全部素材| ORCH
+    LIB[(本地简历素材库)] -->|自动读取所有素材<br/>段落去重+缓存| ORCH
 
-    USER([用户]) <-->|交互| ORCH[Orchestrator Agent<br/>对话 / 协调 / JD解析 / 合并评审]
+    USER([用户]) <-->|交互| ORCH["Orchestrator Agent<br/>协调 / 对话 / JD解析 / 合并评审"]
 
-    ORCH -->|调用| GEN[Generator<br/>生成简历/求职信]
-    ORCH -->|调用| REV1[Reviewer 1<br/>模型 A 评审]
-    ORCH -->|调用| REV2[Reviewer 2<br/>模型 B 评审]
-    ORCH -->|调用| HTMLA[HTML Converter<br/>格式转换]
+    ORCH -->|调用| GEN["Generator Agent<br/>生成定制简历/求职信"]
+    ORCH -->|调用| REV1["Reviewer 1<br/>模型A独立评审"]
+    ORCH -->|调用| REV2["Reviewer 2<br/>模型B独立评审"]
+    ORCH -->|调用| HTMLA["HTML Converter Agent<br/>文本→可打印HTML"]
 
-    REV1 --> MERGE[合并评审意见]
+    REV1 --> MERGE["Orchestrator<br/>合并评审意见"]
     REV2 --> MERGE
     MERGE --> ORCH
 
-    GEN -->|自动保存| LIB2[(素材库<br/>回写 .txt)]
-    HTMLA -->|浏览器下载| DL[简历.html]
+    GEN -->|自动保存.txt| LIB
+    HTMLA -->|浏览器下载| DL["resume.html"]
 
     style LIB fill:#fff3cd,stroke:#ffc107
-    style LIB2 fill:#fff3cd,stroke:#ffc107
     style ORCH fill:#f3e8ff,stroke:#a855f7
     style GEN fill:#e0f2fe,stroke:#0ea5e9
     style REV1 fill:#fef3c7,stroke:#f59e0b
@@ -190,453 +157,476 @@ flowchart TD
     style HTMLA fill:#dcfce7,stroke:#22c55e
 ```
 
-每个 Agent 可以分配不同的 AI 模型，例如：
-- Generator = Claude Opus 4.6（高质量生成）
-- Reviewer 1 = Gemini 2.5 Flash（快速免费）
-- Reviewer 2 = GPT-4o（多样视角）
-- HTML Converter = Gemini 2.5 Flash（简单任务用免费模型）
+### 3.2 四个Agent的职责分工
 
-### 5.3 数据流
+| Agent | 职责 | 推荐模型选择 | 理由 |
+|-------|------|------------|------|
+| **Orchestrator** | 用户对话、JD解析、多评审合并、流程协调 | 旗舰推理模型 | 需要最强推理能力来协调全局 |
+| **Generator** | 根据JD+素材库+指令生成定制简历和求职信 | 旗舰推理模型 | 需要最高写作质量 |
+| **Reviewer × N** | 独立评审+打分（支持多个模型并行） | 多种模型混搭 | 多模型交叉评审降低偏见 |
+| **HTML Converter** | 纯文本→可打印HTML排版 | 免费/轻量模型 | 简单任务用低成本模型 |
+
+### 3.3 编排的核心价值
+
+| 设计决策 | 解决的问题 | 对用户的好处 |
+|---------|-----------|------------|
+| 生成与评审分离 | 消除"自己评审自己"的偏见 | 获得真正独立的第三方意见 |
+| 多模型并行评审 | 单一模型的盲点和偏见 | 交叉验证，发现更多问题 |
+| 每个Agent可配置不同模型 | 成本vs质量的权衡 | 关键环节用好模型，简单环节用免费模型 |
+| 用户在每个环节可介入 | AI自动化的不可控性 | 用户始终掌握最终决定权 |
+| 差分模式（Diff）应用修改 | 全量重生成破坏用户手动编辑 | 保留用户每一处手动修改 |
+
+### 3.4 两级模型配置系统
+
+用户可以灵活混搭不同AI供应商的不同模型：
+
+**第一级：模型连接** — 配置供应商的API凭证
+
+| 接入类型 | 定价 | 可用模型范围 |
+|----------|------|-------------|
+| 付费API代理平台 | 按量付费 | 多家供应商的各类模型（推理模型/生成模型/轻量模型等） |
+| 免费大模型平台 | 免费（有限额，部分地区需VPN） | 该供应商自有模型 |
+
+> 应用采用**供应商无关架构**：通过统一的SDK路由层，自动根据连接类型选择对应的原生SDK或兼容协议调用，用户无需关心底层协议差异。
+
+**第二级：Agent角色分配** — 为每个Agent选择使用哪个连接
+
+```
+┌── 模型连接配置 ────────────────────────────┐
+│  ▼ 付费API代理平台A                        │
+│  ┌──────────┬────────┬────────┬──────────┐ │
+│  │模型类型   │ URL    │ Key    │ Model ID │ │
+│  ├──────────┼────────┼────────┼──────────┤ │
+│  │供应商X    │ ...    │ ****** │ model-x  │ │
+│  │供应商Y    │ ...    │ ****** │ model-y  │ │
+│  └──────────┴────────┴────────┴──────────┘ │
+│  ▸ 付费API代理平台B [点击展开]              │
+│  ▸ 免费大模型平台 [点击展开]                │
+├── Agent角色分配 ──────────────────────────── ┤
+│  Orchestrator  [代理平台A - 供应商X ▼]      │
+│  Generator     [代理平台A - 供应商X ▼]      │
+│  Reviewer      ☑ 代理平台A-Y ☑ 免费平台    │
+│  HTML Converter[免费大模型平台 ▼]           │
+│                          [保存并连接]       │
+└────────────────────────────────────────────┘
+```
+
+### 3.5 完整应用工作流
 
 ```mermaid
 flowchart TD
-    subgraph 输入
-        JD[JD 文本]
-        BASE[基础简历]
-        INST[生成指令]
-    end
+    START([用户打开应用]) --> CONFIG{首次使用?}
+    CONFIG -->|是| SETTINGS["配置AI模型连接<br/>+ Agent角色分配"]
+    CONFIG -->|否| INPUT
+    SETTINGS --> INPUT
 
-    LIB[(本地简历素材库<br/>用户自行维护<br/>APP 只读 + 回写)] -->|选择一份| BASE
-    LIB -->|读取全部| ALL[素材库全文]
+    LIB[(本地简历素材库<br/>用户自行维护)] -->|自动读取全部素材<br/>段落去重+缓存| INPUT
+    INPUT["输入JD + 选择基础简历<br/>+ 编写指令 + 是否生成求职信"]
+    INPUT -->|点击'生成简历'| CONSIST
 
-    subgraph AI处理
-        GEN[Generator<br/>生成简历]
-        REV[Reviewer<br/>评审打分]
-        HTML_GEN[HTML Converter<br/>格式转换]
-    end
+    CONSIST{"素材库中有同公司<br/>历史投递?"}
+    CONSIST -->|有| WARN["⚠️ 黄色警告栏<br/>注入跨投递一致性约束"]
+    CONSIST -->|无| GEN
+    WARN --> GEN
 
-    JD --> GEN
-    BASE --> GEN
-    ALL --> GEN
-    INST --> GEN
-    GEN -->|定制简历.txt| TXT
-    GEN -.->|自动保存| LIB
-    TXT -->|用户编辑后| REV
-    ALL --> REV
-    REV -->|采纳修改| GEN
-    TXT --> HTML_GEN
+    GEN["Generator Agent<br/>流式生成定制简历/求职信"]
+    GEN -->|自动保存.txt| LIB
+    GEN --> EDIT["用户阅读、编辑简历<br/>查看AI备注<br/>可与Generator对话"]
+    EDIT --> REVIEW_Q{需要Review?}
 
-    subgraph 输出
-        TXT[定制简历.txt]
-        HTML_FILE[简历.html<br/>浏览器下载]
-        PDF[简历.pdf<br/>用户手动打印]
-    end
+    REVIEW_Q -->|是| REVIEW["Reviewer Agent(s)<br/>多模型并行评审+打分"]
+    REVIEW_Q -->|否| HTML_Q
 
-    HTML_GEN --> HTML_FILE
-    HTML_FILE -->|用户手动| PDF
+    REVIEW --> APPLY_Q{"采纳修改?"}
+    APPLY_Q -->|AI采纳| APPLY["Generator Agent<br/>差分模式微调<br/>保留用户手动编辑"]
+    APPLY_Q -->|手动修改| EDIT
+
+    APPLY --> EDIT
+
+    HTML_Q{导出HTML?}
+    HTML_Q -->|是| HTML["HTML Converter Agent<br/>body-only输出<br/>前端组装CSS模板"]
+    HTML_Q -->|否| DONE
+
+    HTML --> DOWNLOAD["浏览器下载HTML<br/>可上传PDF让AI检查排版"]
+    DOWNLOAD --> PDF["浏览器打印PDF"]
+    PDF --> DONE([完成])
 
     style LIB fill:#fff3cd,stroke:#ffc107
+    style WARN fill:#fff3cd,stroke:#ffc107
+    style GEN fill:#e0f2fe,stroke:#0ea5e9
+    style REVIEW fill:#fef3c7,stroke:#f59e0b
+    style APPLY fill:#e0f2fe,stroke:#0ea5e9
+    style HTML fill:#dcfce7,stroke:#22c55e
 ```
 
----
-
-## 6. 功能说明
-
-### 6.1 功能一览
-
-| # | 功能 | 触发方式 | 说明 |
-|---|------|---------|------|
-| F1 | AI 模型配置 | 点击「设置」按钮 | 配置供应商连接 + Agent 角色分配 |
-| F2 | 素材库加载 | 输入路径 + 点击「加载」 | 自动读取本地文件夹中的所有素材 |
-| F3 | 简历生成 | 点击「生成简历」 | AI 根据 JD + 基础简历 + 素材库生成定制简历/求职信 |
-| F4 | AI 备注与对话 | 生成后自动显示 | 查看 AI 分析、回答确认事项 |
-| F5 | 简历评审 | 点击「开始 Review」 | 一个或多个 AI 模型并行评审 |
-| F6 | 采纳修改 | 点击「采纳并更新简历」 | AI 基于评审意见微调（保留用户手动编辑） |
-| F7 | Review 对话 | 在 Review 区聊天框 | 与 AI 讨论评审细节 |
-| F8 | HTML 导出 | 点击「生成 HTML 并下载」 | 生成打印版 HTML 并触发浏览器下载 |
-| F9 | HTML 调试对话 | 在 HTML 区聊天框 | 上传 PDF 让 AI 看排版问题并修复 |
-| F10 | 自动保存 | 生成后自动执行 | AI 根据 JD 自动命名文件并保存回素材库 |
-| F11 | 仿真模式 | 勾选「仿真模式」 | 模拟全流程，不消耗 Token |
-| F12 | 跨投递一致性检查 | 生成/评审时自动触发 | 检测同公司历史投递，注入一致性约束防止事实矛盾 |
-
-### 6.2 功能详细说明
-
-#### F1 — AI 模型配置
-
-两级配置：先配连接，再分配 Agent。
+### 3.6 UI布局
 
 ```
-设置弹窗布局：
-
-┌── 模型连接配置 ──────────────────────────────────┐
-│                                                  │
-│  ▼ Jiekou.ai（付费代理）                          │
-│  ┌────────┬────────────────┬──────────┬────────┐ │
-│  │模型类型 │ API URL        │ API Key  │Model ID│ │
-│  ├────────┼────────────────┼──────────┼────────┤ │
-│  │OpenAI  │api.jiekou.ai/v1│ ******** │ gpt-4o │ │
-│  │Google  │api.jiekou.ai/v1│ ******** │ gem... │ │
-│  │Anthro  │.../anthropic   │ ******** │ opus.. │ │
-│  └────────┴────────────────┴──────────┴────────┘ │
-│                                                  │
-│  ▶ OpenRouter.ai（付费代理）[点击展开]             │
-│  ▶ Google AI Studio（免费直连 — 需 VPN）[点击展开] │
-│                                                  │
-├── Agent 模型分配 ────────────────────────────────┤
-│  (下拉选项从上方已配置的连接中自动生成)              │
-│                                                  │
-│  Orchestrator   [Jiekou Anthropic (opus-4-6) ▼]  │
-│  Generator      [Jiekou Anthropic (opus-4-6) ▼]  │
-│  Reviewer       ☑ Jiekou Google  ☑ Google Studio │
-│  HTML Converter [Google AI Studio (flash)    ▼]  │
-│                                                  │
-│                            [保存并连接]           │
+┌──────────────────────────────────────────────────┐
+│  Header: [简历定制助手]     [仿真模式 ☐]  [设置]  │
+├──────────────────────────────────────────────────┤
+│  输入区                                           │
+│  ├── JD输入框                                     │
+│  ├── 素材库路径 + [浏览] [加载]                     │
+│  ├── 基础简历下拉选择                               │
+│  ├── [▸ 生成指令] (可折叠)                          │
+│  ├── [▸ HTML格式指令] (可折叠)                      │
+│  └── [☐ 同时生成求职信]  [生成简历]                  │
+├──────────────────────────────────────────────────┤
+│  输出区（始终可见，可跳步操作）                        │
+│  ┌────────────────────┬──────────────────────┐    │
+│  │ 简历/求职信编辑区     │ Review面板           │    │
+│  │ [保存] [重新生成]     │ [开始Review]         │    │
+│  │                      │ [采纳并更新简历]      │    │
+│  │ ┌──────────────────┐ │ ┌──────────────────┐│    │
+│  │ │ 简历编辑器        │ │ │ Review结果       ││    │
+│  │ │ (可直接编辑)      │ │ │ (可编辑)         ││    │
+│  │ └──────────────────┘ │ └──────────────────┘│    │
+│  │ ▸ AI备注 (折叠)      │                      │    │
+│  │ Generator对话        │ Review对话           │    │
+│  └────────────────────┴──────────────────────┘    │
+│  ┌──────────────────────────────────────────┐     │
+│  │ [生成HTML并下载]                           │     │
+│  │ HTML对话 (支持上传PDF调试排版)              │     │
+│  └──────────────────────────────────────────┘     │
 └──────────────────────────────────────────────────┘
 ```
 
-**配置逻辑**：
-1. 用户在上方表格中填写 API Key 和 Model ID
-2. 下方 Agent 分配区自动出现已配置的连接作为选项
-3. 点击「保存并连接」→ 加密保存凭证 + 测试连接
-
-#### F2 — 素材库加载
-
-```mermaid
-flowchart LR
-    A[用户输入素材库路径<br/>点击 加载] --> B[APP 服务端<br/>遍历文件夹<br/>读取全部支持格式]
-    B --> C[文件列表显示在下拉框]
-    C --> D[用户选择一份<br/>作为 基础简历]
-    C --> E[其余全部<br/>作为素材供 AI 参考]
-
-    style B fill:#fff3cd
-```
-
-支持格式：`.txt` `.html` `.pdf` `.docx`（`.pages` 提示手动粘贴）
-
-素材库的路径持久化保存，下次打开 APP 自动加载。素材库由用户自行维护，APP 每次使用时重新读取最新内容。
-
-#### F3 — 简历生成
-
-AI 输出强制三段式结构，前端自动解析分离：
-
-```
-===== 简历正文 =====          ──┐
-[候选人姓名]                    │ → 显示在「简历编辑区」
-Senior Product Manager          │    用户可直接编辑
-...                            ─┘
-
-===== 求职信正文 =====        ──┐
-尊敬的招聘经理：                 │ → 也显示在「简历编辑区」
-...                            ─┘    （如果勾选了生成求职信）
-
-===== AI备注 =====            ──┐
-分析策略：...                    │ → 显示在折叠的「AI备注」区
-需要确认：...                    │    不污染简历编辑区
-...                            ─┘
-```
-
-#### F5 — 简历评审（支持多模型）
-
-```mermaid
-flowchart TD
-    INPUT[JD + 原始简历 + 素材库全文] --> RESUME[待评审的<br/>定制简历/求职信]
-    RESUME --> R1[Reviewer 1<br/>模型 A]
-    RESUME --> R2[Reviewer 2<br/>模型 B]
-    R1 -->|评审意见 A| MERGE[Orchestrator<br/>合并分歧]
-    R2 -->|评审意见 B| MERGE
-    MERGE --> RESULT[综合评审报告<br/>简历评审 + 求职信评审<br/>评分 / 共识 / 分歧]
-
-    style INPUT fill:#fff3cd
-    style R1 fill:#fef3c7
-    style R2 fill:#fef3c7
-```
-
-评审维度：
-- 与原始简历的事实一致性
-- 篇幅是否控制在 2 页 A4
-- JD 关键词堆砌检测
-- 核心经历深度是否足够
-- 诚实度与过度包装检测
-- 数字一致性
-
-#### F6 — 采纳修改
-
-关键设计：**保留用户的手动编辑**
-
-```mermaid
-flowchart LR
-    A[用户手动编辑后的简历] --> GEN[Generator<br/>微调]
-    B[Review 评审意见] --> GEN
-    C[指令: 在用户版本基础上微调<br/>保留所有手动编辑<br/>不要重新生成] --> GEN
-    GEN --> D[微调后的简历]
-```
-
-#### F9 — HTML 调试对话
-
-```
-用户：[上传打印出的 PDF]  页脚被截断了，第二页太空
-
-  AI：看到了，第一页的 margin-bottom 太大导致内容溢出，
-      第二页空白是因为 page-break 位置不对。
-      已修正，下载更新版 HTML：
-
-  [浏览器自动下载 更新版.html]
-```
-
-#### F10 — 自动文件命名
-
-```mermaid
-flowchart LR
-    JD[JD 文本] -->|Orchestrator 解析| PARSE[提取信息<br/>company / dept / title / lang]
-    PARSE --> NAME["[name] - resume -<br/>Company - Dept -<br/>Title - 2026-04-05.txt"]
-    NAME -->|自动保存| LIB[(素材库目录)]
-
-    style LIB fill:#fff3cd
-```
-
-命名规则：
-- 中文 JD → 中文公司名/职位名
-- 英文 JD → 英文公司名/职位名
-- 日期 = 生成当天
-
-#### F12 — 跨投递一致性检查
-
-当用户为某公司生成简历时，系统自动扫描素材库，检测是否存在之前向**同一公司**投递过的简历或求职信。如果存在，将这些历史投递作为上下文传递给 AI，并注入分层一致性约束规则。
-
-**检测流程**：
-
-```mermaid
-flowchart TD
-    START[用户点击 生成简历 / 开始Review] --> PARSE[解析素材库文件名<br/>提取公司名段<br/>格式: name-type-company-dept-title-date]
-    PARSE --> MATCH{素材库中存在<br/>同公司历史投递?}
-    MATCH -->|否| NORMAL[正常生成/评审<br/>无额外约束]
-    MATCH -->|是| DEDUP{当前基础简历<br/>是否在匹配结果中?}
-    DEDUP -->|是 — 去重| EXCLUDE[排除基础简历<br/>它已作为 originalResume<br/>单独传入 prompt]
-    DEDUP -->|否 — 无需去重| HINT
-    EXCLUDE --> HINT[显示黄色警告栏<br/>⚠️ 检测到 N 份同公司投递]
-    HINT --> CONCAT[拼接历史投递内容<br/>为 previouslySubmitted]
-    CONCAT --> INJECT[注入一致性约束到 Prompt]
-    INJECT --> AI[AI 生成/评审<br/>遵循一致性规则]
-
-    style HINT fill:#fff3cd,stroke:#ffc107
-    style AI fill:#e0f2fe,stroke:#0ea5e9
-```
-
-**基础简历排除逻辑说明**：
-
-系统会排除当前选中的基础简历，避免它同时出现在 `originalResume` 和 `previouslySubmitted` 两个 prompt 段落中造成重复。两种典型场景：
-
-| 场景 | 基础简历 | 排除是否触发 | 说明 |
-|------|---------|------------|------|
-| A — 最常见 | 通用主简历（如 `base-resume.txt`） | 不触发 | 文件名不含公司名，不会匹配到检索结果中。所有同公司历史投递完整进入 `previouslySubmitted`。AI 参考原始事实 + 所有历史投递生成新简历 |
-| B | 某份已投递的同公司简历 | 触发 | 该文件已作为 `originalResume` 传入，排除避免重复。其余同公司投递正常进入 `previouslySubmitted`，AI 不会遗漏任何信息 |
-
-**一致性约束分层**：
-
-| 层级 | 规则 | 可否调整 |
-|------|------|---------|
-| 事实层 | 时间线、Title、公司名、项目名、数据指标、专利/论文、教育背景 | 必须完全一致 |
-| 事实层 | 技能列表 | 不能凭空新增之前未出现过的技能 |
-| 表达层 | Summary/Skills 排列顺序、项目要点侧重角度、关键词选择 | 可按目标岗位灵活调整 |
-
-**最终效果**：在 HR 眼中，同一公司的多份投递看起来是「同一份经历的两个不同侧面」，而非前后矛盾的两份简历。
+**关键交互设计**：
+- 输出区**始终可见**——用户可以跳步操作（直接粘贴已有简历去Review，或直接导出HTML）
+- 简历编辑区和Review面板**左右并排**，方便对比阅读和编辑
+- 每个功能区都有**独立的AI对话框**，用户可以就该环节的问题与AI讨论
+- AI备注**与简历正文分离**显示，不会污染编辑区
 
 ---
 
-## 7. 多模型配置系统
+## 4. AI不确定性管理：约束、降级与护栏
 
-### 7.1 支持的供应商
+> 构建AI-Native产品的核心挑战：AI的输出是概率性的，不是确定性的。本节记录Resume Tailor如何在系统层面管理AI的不确定性。
 
-| 供应商 | 计费 | 可用模型族 | 网络要求 |
-|--------|------|-----------|---------|
-| Jiekou.ai | 付费 | OpenAI / Google / Anthropic | 无 |
-| OpenRouter.ai | 付费 | OpenAI / Google / Anthropic | 无 |
-| Google AI Studio | 免费 | Google | 需VPN |
+### 4.1 约束层（System Constraints）— 限定AI行为边界
 
-### 7.2 SDK 路由
+| 约束 | 应用场景 | 实现方式 |
+|------|---------|---------|
+| **结构化输出格式** | 简历生成 | 强制三段式分隔符（`===== 简历正文 =====` / `===== AI备注 =====`），前端解析器拒绝不合格输出 |
+| **事实诚实性硬约束** | 生成+评审 | Prompt注入："必须诚实，不得编造经历、数据或证书" |
+| **跨投递一致性约束** | 同公司多次投递 | 分层规则：事实层锁定（Title/时间线/数据必须一致），表达层灵活（侧重点可调） |
+| **篇幅限制** | 生成+HTML | "必须在2页A4内" |
+| **输出token上限** | 每条API路由 | 按路由校准：JD解析=256, 评审=3072, 生成=8192，防止AI过度输出 |
+| **Body-only HTML** | HTML生成 | AI只输出`<body>`内HTML，系统用预置CSS模板组装完整文档 |
 
-不同的连接走不同的 SDK，用户无需关心：
+### 4.2 降级层（Fallbacks）— AI失败时的优雅退化
+
+```mermaid
+flowchart TD
+    subgraph "JD信息提取"
+        JD1["本地正则解析<br/>(tryLocalJdParse)"] -->|成功| JD_OK["使用本地结果<br/>0 token消耗"]
+        JD1 -->|失败| JD2["AI提取<br/>(/extract-jd-info)"]
+        JD2 -->|失败| JD3["用户手动输入"]
+    end
+
+    subgraph "评审意见应用（差分模式）"
+        D1["AI输出结构化差分指令"] --> D2["严格正则解析"]
+        D2 -->|失败| D3["宽松正则解析<br/>(容忍空格差异)"]
+        D3 -->|失败| D4["降级：完整重新生成<br/>(指令：保留用户编辑)"]
+        D2 -->|成功| D5["差分应用：精确匹配<br/>→ 去空格匹配<br/>→ 行级规范化匹配"]
+        D3 -->|成功| D5
+        D5 -->|部分失败| D6["应用成功的+提醒失败的"]
+    end
+
+    style JD_OK fill:#dcfce7
+    style D6 fill:#fef3c7
+```
+
+**差分匹配三层容错的设计意义**：AI输出的修改指令（"把A改成B"）中的"A"经常和原文有微小差异（多余空格、换行不一致等）。三层匹配确保即使AI不够精确，修改也不会静默丢失：
+
+| 层级 | 匹配策略 | 容忍的差异 |
+|------|---------|-----------|
+| 第1层 | 精确字符串匹配 | 无 |
+| 第2层 | 去除首尾空格后匹配 | 空格、制表符 |
+| 第3层 | 按行规范化后匹配 | 换行符、行内多余空格 |
+| 最终降级 | 完整重新生成 | 所有（但保留用户编辑指令） |
+
+### 4.3 护栏层（Guardrails）— 防止有害输出
+
+| 风险 | 护栏 |
+|------|------|
+| **编造经历/数据** | Prompt硬约束 + Review明确检查项："是否存在原始素材中不支持的声明？" |
+| **同公司简历矛盾** | 自动检测历史投递 → 注入分层一致性约束 → Review追加跨投递检查维度 |
+| **关键词堆砌** | Review检查项："是否存在不自然的关键词堆砌？" |
+| **过度包装** | Review检查项："诚实度与过度包装检测——标记无法被原始素材支持的声明" |
+| **破坏用户编辑** | 差分模式（AI只输出修改指令而非全量重写） + Prompt指令"保留所有用户手动编辑" |
+| **AI成本失控** | 每路由maxTokens上限 + 仿真模式 + 聊天历史滑动窗口 + 历史base64清理 |
+
+### 4.4 人在回路（Human-in-the-Loop）设计
+
+Resume Tailor遵循的原则：**AI提议，人做决定**。
 
 ```mermaid
 flowchart LR
-    A[Jiekou Anthropic] -->|原生 SDK| SDK1[Anthropic SDK<br/>完整功能 - 多模态等]
-    B[Google AI Studio] -->|原生 SDK| SDK2[Google GenAI SDK<br/>直连 - 需 VPN]
-    C[Jiekou OpenAI/Google<br/>OpenRouter 全部] -->|兼容调用| SDK3[OpenAI 兼容 API<br/>raw fetch]
+    GEN["AI生成<br/>简历初稿"] --> EDIT["用户阅读、编辑<br/>与AI对话讨论"]
+    EDIT --> DECIDE{"满意?"}
+    DECIDE -->|"需要Review"| REV["AI评审<br/>(用户主动触发)"]
+    REV --> READ["用户阅读Review<br/>与AI讨论"]
+    READ --> APPLY{"采纳修改?"}
+    APPLY -->|"AI采纳"| AI_APPLY["AI差分应用"]
+    APPLY -->|"自己改"| EDIT
+    AI_APPLY --> EDIT
+    DECIDE -->|"导出HTML"| HTML["用户触发HTML导出<br/>(不会自动开始)"]
+
+    style EDIT fill:#e0f2fe
+    style READ fill:#e0f2fe
+    style DECIDE fill:#e0f2fe
+    style APPLY fill:#e0f2fe
 ```
 
-### 7.3 推荐配置方案
-
-**方案一：最低成本（全免费）**
-| Agent | 连接 | 模型 | 成本 |
-|-------|------|------|------|
-| Orchestrator | Google AI Studio | gemini-2.5-flash | 免费 |
-| Generator | Google AI Studio | gemini-2.5-flash | 免费 |
-| Reviewer | Google AI Studio | gemini-2.5-flash | 免费 |
-| HTML Converter | Google AI Studio | gemini-2.5-flash | 免费 |
-
-**方案二：质量优先**
-| Agent | 连接 | 模型 | 成本 |
-|-------|------|------|------|
-| Orchestrator | Jiekou Anthropic | claude-opus-4-6 | 付费 |
-| Generator | Jiekou Anthropic | claude-opus-4-6 | 付费 |
-| Reviewer x2 | Jiekou Google + Google Studio | gemini-2.5-pro + flash | 混合 |
-| HTML Converter | Google AI Studio | gemini-2.5-flash | 免费 |
-
-**方案三：多样评审**
-| Agent | 连接 | 模型 | 成本 |
-|-------|------|------|------|
-| Orchestrator | Jiekou Anthropic | claude-opus-4-6 | 付费 |
-| Generator | Jiekou Anthropic | claude-opus-4-6 | 付费 |
-| Reviewer x3 | Jiekou OpenAI + Jiekou Google + Google Studio | gpt-4o + gemini-2.5-pro + flash | 混合 |
-| HTML Converter | Google AI Studio | gemini-2.5-flash | 免费 |
+**一切操作由用户主动触发**：
+- Review不会在生成后自动开始——用户点击"开始Review"
+- HTML导出不会自动开始——用户点击"生成HTML并下载"
+- 采纳修改不会自动应用——用户点击"采纳并更新简历"
 
 ---
 
-## 8. 使用指南
+## 5. Token成本优化战略
 
-### 8.1 安装与启动
+> 核心策略：**不变的上下文预处理一次、持久化缓存、后续直接复用。能本地处理的，不用AI。**
+
+### 5.1 优化效果总览
+
+| 阶段 | 优化方向 | 效果 |
+|------|---------|------|
+| 第一阶段：Input token | 素材库去重缓存、本地JD解析、供应商Prompt Caching | **75-87% 节省** |
+| 第二阶段：Output token | 差分模式、精简prompt、Body-only HTML | **52% 节省** |
+| 第三阶段：审计 | 缓存标记优化、CSS精简、差分鲁棒性 | 额外缓存收益 |
+
+### 5.2 Input Token优化策略
+
+```mermaid
+flowchart TD
+    subgraph "素材库处理（执行一次，缓存复用）"
+        READ["读取所有素材文件"] --> SPLIT["按段落分割"]
+        SPLIT --> DEDUP["MD5 hash去重"]
+        DEDUP --> DISK["持久化到磁盘缓存"]
+        DISK -->|"下次：文件未变"| HIT["缓存命中 → 跳过全部处理"]
+        DISK -->|"文件有变"| MISS["缓存失效 → 重新处理"]
+    end
+
+    subgraph "JD信息提取"
+        LOCAL["本地正则提取<br/>(0 token)"] -->|失败| AI["AI提取<br/>(maxTokens=256)"]
+    end
+
+    subgraph "聊天上下文管理"
+        WINDOW["滑动窗口：种子2条<br/>+ 最近5轮(10条)"] --> CLEAN["清理历史中的<br/>base64数据"]
+    end
+
+    style HIT fill:#dcfce7
+```
+
+| 策略 | 节省 |
+|------|------|
+| 素材库段落级MD5去重 + 磁盘缓存 | 缓存命中时100%，首次30-60% |
+| 本地JD解析（正则提取公司/部门/职位） | 每次~1600 token |
+| 供应商Prompt Caching（利用部分供应商API的缓存特性，对重复发送的大块内容标记缓存控制标识，服务端缓存后续请求该部分大幅降低费用） | 缓存命中时90% |
+| 聊天历史滑动窗口 + base64清理 | 上限控制在~20K |
+| PDF用本地Poppler `pdftotext`提取（非AI OCR） | 远低于AI解析成本 |
+
+### 5.3 Output Token优化策略
+
+| 策略 | 节省 |
+|------|------|
+| 差分模式应用评审：AI输出`[REPLACE]<<<旧文本>>>新文本[/REPLACE]`而非全量重写 | **79%** |
+| Body-only HTML：AI只输出`<body>`内容，前端组装完整文档 | **30%** |
+| 多模型评审精简格式：每个Reviewer只输出评分+5条问题+5条建议 | **54%** |
+| 按路由校准maxTokens上限 | 防止浪费 |
+| 聊天分型system prompt（review/generator/html各不同） | **33%** |
+
+---
+
+## 6. 使用场景
+
+### 场景1：首次投递一份新职位
+
+用户拿到JD → 粘贴JD到输入框 → 选择基础简历 → 加载素材库 → 点击"生成简历" → AI流式生成定制简历/求职信 → 用户编辑 → 点击"开始Review" → AI多模型评审打分 → 点击"采纳并更新" → 满意后点击"生成HTML并下载" → 浏览器打印PDF → 完成。
+
+### 场景2：向同一公司投递第二个职位
+
+用户为某公司A部门的高级产品经理职位生成简历后，又要为该公司B部门的资深产品经理投递。系统自动检测到素材库中已有该公司的历史投递，显示黄色警告"⚠️ 检测到已向[该公司]投递过1份简历/求职信"，并自动在生成和评审的prompt中注入一致性约束——确保Title/时间线/项目数据与上一份完全一致，但Summary/技能排序/项目侧重可以根据新JD调整。
+
+### 场景3：迭代优化
+
+用户对AI生成的简历不完全满意 → 在编辑区手动修改几处表述 → 点击"开始Review"对修改后的版本重新评审 → 阅读评审意见 → 点击"采纳并更新"（AI用差分模式微调，保留用户的手动修改） → 再次编辑 → 满意后导出。
+
+### 场景4：仅格式转换
+
+用户已经有一份满意的txt格式简历（可能是在其他工具中写好的）→ 直接粘贴到简历编辑区 → 跳过"生成"和"Review"步骤 → 直接点击"生成HTML并下载" → 浏览器打印PDF。
+
+---
+
+## 7. 安全与隐私
+
+```mermaid
+flowchart TD
+    BROWSER["用户浏览器<br/>仅localhost"] -->|"仅限本地请求"| SERVER["本地Node服务<br/>无数据库<br/>API Key AES-256-GCM加密<br/>路径白名单校验<br/>CORS: 仅localhost"]
+    SERVER -->|"HTTPS加密"| API1["AI供应商API A"]
+    SERVER -->|"HTTPS加密"| API2["AI供应商API B"]
+    SERVER -->|"HTTPS加密"| API3["AI供应商API C"]
+
+    NOTE["只有简历内容+JD发送到AI API<br/>无个人元数据<br/>无自建服务器/数据库<br/>无遥测/无数据收集<br/>（V1.x规划：PII脱敏后发送）"]
+
+    style NOTE fill:#f0fdf4,stroke:#22c55e
+```
+
+| 威胁面 | 防护措施 |
+|--------|---------|
+| API Key泄漏 | AES-256-GCM加密 + PBKDF2密钥派生（10万次迭代），基于浏览器指纹 |
+| 简历内容泄漏 | 纯本地运行，无云存储、无遥测、除AI API外不发送到任何第三方 |
+| PII泄漏 | V1.x规划：姓名/电话/邮箱等PII在发送AI API前自动替换为占位符，返回后自动恢复（详见[路线图](#8-产品路线图)） |
+| 路径遍历攻击 | 服务端`allowedDirs`白名单 + `path.resolve()`前缀校验 |
+| CORS攻击 | 严格限制origin：仅`localhost`和`127.0.0.1` |
+| Shell注入 | PDF解析使用`execFile`（非`exec`），无shell插值 |
+
+---
+
+## 8. 产品路线图
+
+### V1（当前版本）：单应用内的多Agent编排
+
+多Agent协作（Orchestrator/Generator/Reviewer/HTML Converter）在一个本地应用内完成简历定制全流程。**已完成并上线。**
+
+### V1.x：PII脱敏保护（最高优先级）
+
+**产品设计动机**：当前简历内容（含姓名、电话、邮箱等PII）直接发送给AI API，即使传输链路加密，仍存在供应商日志泄露的风险。这是产品层面的隐私Guardrails——在AI调用链路中设置不可逾越的PII边界。
+
+- **发送前**：自动识别并替换PII为占位符（如 `[姓名]`、`[电话]`、`[邮箱]`），脱敏后的内容才发送给AI API
+- **返回后**：AI生成的简历中自动将占位符恢复为真实PII，展示给用户
+- **PII映射表仅存储在本地**，绝不发送给任何外部API
+- **价值**：即使AI供应商的日志被泄露，攻击者也无法还原用户真实身份信息
+- **架构影响**：作为V1增量更新，不改变现有架构，仅在API调用层增加拦截/恢复中间件
+
+### V2：成本透明化与多模态素材
+
+#### V2.1 Token预估与费用透明化
+
+**产品设计动机**：这是AI不确定性管理的又一种Guardrails——在不确定的AI成本面前，给用户设置明确的预期和确认门槛。
+
+- **生成前**：根据输入内容（JD长度 + 素材库大小 + 所选模型）预估本次定制的token消耗和对应费用，**用户确认后才开始**
+- **生成后**：实时显示实际消耗的input/output token数量，按所选模型供应商单价折算实际费用
+- **价值**：让用户对AI使用成本有完全的可预见性和控制权，消除"用完才知道花了多少"的焦虑
+
+#### V2.2 多模态素材支持
+
+- 支持图片（作品集/证书扫描）、视频（项目演示/自我介绍）、源代码（代码仓库/代码片段）、外部社交媒体内容（职业社交平台帖子/博客文章等）
+- **价值**：从"文本简历素材"扩展到"全方位职业画像"，AI可以从更丰富的维度理解候选人
+
+### V3：跨应用自动化编排与面试链路
+
+#### V3.1 跨应用自动化编排
+
+- Agent自动搜索网络上的相关JD → 根据JD自动生成定制简历 → 自动投递
+- **价值**：从"用户主动找JD"演进到"系统主动发现+匹配+投递"
+- **核心挑战**：JD来源多样（各类招聘网站/职业社交平台等）、投递流程差异大、反爬虫
+
+#### V3.2 面试完整链路
+
+- 基于JD自动生成面试问题库 + AI模拟面试官（多角色：技术面试官/HR/业务主管等）
+- 实时反馈、答案优化建议、面试表现评分和改进追踪
+- 众包评审：以AI模拟面试官为主 + human-in-the-loop人类众包点评
+- **价值**：从"写好简历通过初筛"升级到"通过复试/终面"的完整求职链路
+
+### V4：平台化 —— "简历灌篮高手"
+
+- 多用户求职社区平台
+- 用户注册和简历库管理
+- 社区共享的JD库 + 投递数据
+- 众包评审：以AI机器人评审为主 + human-in-the-loop人类众包评审
+- 投递成功率排行榜（透明化求职竞争力）
+- **价值**：从个人工具演进为求职生态，连接求职者、简历数据和市场反馈
+
+### 核心设计理念：多Agent跨应用编排的演进
+
+```mermaid
+flowchart LR
+    V1["V1: 单应用内多Agent<br/>Orchestrator/Generator<br/>Reviewer/HTML"] --> V1X["V1.x: 隐私感知Agent<br/>PII脱敏/恢复<br/>拦截中间件"]
+    V1X --> V2["V2: 成本感知Agent<br/>+ 多模态感知Agent"]
+    V2 --> V3["V3: 跨应用编排<br/>JD发现Agent →<br/>简历Agent →<br/>投递Agent<br/>+ 面试教练Agent"]
+    V3 --> V4["V4: Agent生态<br/>AI+人类众包评审<br/>数据聚合Agent<br/>社区协作Agent"]
+
+    style V1 fill:#e0f2fe,stroke:#0ea5e9
+    style V1X fill:#fce7f3,stroke:#ec4899
+    style V2 fill:#fef3c7,stroke:#f59e0b
+    style V3 fill:#f3e8ff,stroke:#a855f7
+    style V4 fill:#dcfce7,stroke:#22c55e
+```
+
+从V1到V4，产品的Agent编排在三个维度上持续拓展：
+
+| 维度 | V1 | V1.x | V2 | V3 | V4 |
+|------|----|----|----|----|-----|
+| **Agent数量** | 4个 | +PII拦截层 | +成本/多模态Agent | +JD搜索/投递/面试Agent | +人类众包/社区Agent |
+| **编排范围** | 单应用内 | 单应用内 | 单应用内 | 跨应用/跨网站 | 跨平台生态 |
+| **人机协作** | 用户主导 | 用户主导 | 用户主导 | 半自动 | AI为主+人类众包 |
+
+---
+
+## 9. 快速开始
+
+### 前置条件
+
+- **Node.js** >= 18
+- **Poppler**（用于素材库PDF文本提取）：`brew install poppler`
+- 至少一个AI API Key（部分大模型平台提供免费额度）
+
+### 安装与启动
 
 ```bash
-# 1. 进入项目目录
-cd <项目目录>
-
-# 2. 安装依赖（仅首次）
+git clone <本项目仓库URL>
+cd resumeTailor/vscCCOpus
 npm install
-
-# 3. 启动应用
 npm run dev
-
-# 4. 浏览器打开
-open http://localhost:5173
+# 浏览器打开 http://localhost:5173
 ```
 
-停止应用：在终端按 `Ctrl+C`
+### 首次建议：仿真模式
 
-### 8.2 首次配置
+1. 勾选页面顶部"仿真模式"
+2. 按正常流程操作——所有AI输出为预设文本，零API成本
+3. 验证工作流无问题后，取消勾选切换到真实AI
 
-```mermaid
-flowchart TD
-    A[点击右上角 设置] --> B[展开你使用的供应商区块]
-    B --> C[填写 API Key 和 Model ID]
-    C --> D[在 Agent 分配区<br/>选择各 Agent 使用的模型]
-    D --> E[点击 保存并连接]
-    E --> F{连接成功?}
-    F -->|是| G[自动关闭设置弹窗<br/>可以开始使用]
-    F -->|否| H[检查 Key 和 URL<br/>重新保存]
-    H --> C
-```
+### 快速参考
 
-### 8.3 标准使用流程
-
-#### 第一步：准备输入
-
-1. 在「职位描述 (JD)」框中粘贴目标岗位的 JD
-2. 在「简历素材库路径」中输入素材库文件夹的本地绝对路径，点击「加载」
-3. 在「基础简历」下拉框中选择一份基础简历（APP 会自动读取素材库全部内容供 AI 参考）
-4. （可选）展开「生成指令」编辑框，填写特殊要求
-5. （可选）勾选「同时生成求职信」
-
-#### 第二步：生成简历
-
-1. 点击「生成简历」按钮
-2. 等待 AI 流式输出完成（简历自动保存到素材库）
-3. 阅读生成的简历，直接在编辑区修改
-4. 如果有 AI 备注，展开查看并在对话框中回答确认事项
-
-#### 第三步：评审
-
-1. 点击「开始 Review」
-2. 阅读评审意见和评分（简历和求职信分别评审）
-3. 选择：
-   - 点击「采纳并更新简历」让 AI 自动微调（保留你的手动编辑）
-   - 或自己手动修改后再次 Review
-4. 可在 Review 对话框中与 AI 讨论细节
-
-#### 第四步：HTML 导出
-
-1. 确认简历满意后，点击「生成 HTML 并下载」
-2. 浏览器下载栏弹出 HTML 文件
-3. 点击下载的文件在浏览器中预览
-4. `Cmd + P` 打印为 PDF（HTML 的 `<title>` 已设为文件名，PDF 自动使用此名称）
-5. 如果排版有问题，在 HTML 对话框中上传 PDF 让 AI 修复
-
-### 8.4 仿真模式（Mock Mode）
-
-首次使用建议先用仿真模式跑通流程：
-
-1. 勾选右上角「仿真模式」
-2. 按正常流程操作（无需配置 API Key）
-3. 所有 AI 输出都是预设文本，不消耗 Token
-4. 确认流程无误后，取消勾选即可切换到真实模式
-
-### 8.5 常见操作速查
-
-| 我想要... | 怎么做 |
-|-----------|--------|
-| 跳过生成，直接 Review 已有简历 | 直接在编辑区粘贴简历，点击「开始 Review」 |
-| 跳过 Review，直接导出 HTML | 编辑区有内容即可点击「生成 HTML 并下载」 |
-| 重新生成简历 | 点击「重新生成」按钮 |
-| 手动保存当前简历 | 点击「保存到素材库」，可修改文件名 |
-| 更换 AI 模型 | 设置 → 修改 Agent 分配 → 保存并连接 |
-| 修改 HTML 格式要求 | 展开「HTML 格式指令」编辑框 |
-| `.pages` 文件无法读取 | 在系统弹出的手动输入框中粘贴内容 |
+| 我想... | 怎么做 |
+|---------|--------|
+| 跳过生成，直接Review | 把简历粘贴到编辑区 → 点击"开始Review" |
+| 跳过Review，直接导出HTML | 编辑区有简历 → 点击"生成HTML并下载" |
+| 更换AI模型 | 设置 → 修改Agent分配 → 保存 |
 
 ---
 
-## 9. 安全与隐私
+## 10. 术语表
 
-### 9.1 架构
-
-```mermaid
-flowchart TD
-    BROWSER[用户浏览器<br/>本地运行] -->|localhost only| SERVER[本地 Node Express 服务<br/>无数据库<br/>API Key 加密存储<br/>路径白名单校验<br/>CORS 限 localhost]
-    SERVER -->|HTTPS 加密传输| API1[AI 代理 A]
-    SERVER -->|HTTPS 加密传输| API2[AI 代理 B]
-    SERVER -->|HTTPS 加密传输| API3[Google AI Studio]
-
-    NOTE1[/"仅简历内容 + JD 传输到 AI API<br/>不传输其他个人信息<br/>无自建服务器 无数据库<br/>无数据发送到除 AI API 以外的地方"/]
-```
-
-### 9.2 具体措施
-
-| 保护对象 | 措施 |
-|----------|------|
-| API Key | AES-256-GCM 加密后存入浏览器 localStorage |
-| 简历内容 | 不存云端，不经过非 AI API 的第三方 |
-| 文件系统 | 服务端路径白名单校验，防止目录遍历攻击 |
-| 网络请求 | CORS 仅允许 localhost 源 |
-| 源代码 | 纯本地运行，无远程依赖 |
-
----
-
-## 10. 技术约束与限制
-
-| 约束 | 说明 | 影响 |
-|------|------|------|
-| 系统依赖 | 需预装 Poppler（`brew install poppler`）用于 PDF 文本提取 | 未安装时无法读取素材库中的 PDF 文件 |
-| 内存限制 | Node.js 限制 512MB | 防止老设备卡死 |
-| `.pages` 文件 | Apple 专有格式无法解析 | 提示用户手动粘贴 |
-| Google AI Studio | 需要 VPN（中国大陆） | 直连时需开启 VPN |
-| Gemini 2.5 Pro | 免费额度可能为 0 | 默认使用 2.5 Flash |
-| PDF 多模态 | OpenAI 兼容 API 不支持 PDF 上传 | HTML调试对话中仅 Anthropic/Google 模型支持上传PDF |
-| 浏览器依赖 | 凭证存在 localStorage | 换浏览器需重新配置 |
-| 打印 PDF | 不同浏览器打印效果略有差异 | 推荐使用 Chrome |
-
----
-
-## 11. 术语表
-
-| 术语 | 说明 |
+| 术语 | 定义 |
 |------|------|
-| JD | Job Description，职位描述 |
-| 简历素材库 | 用户本地维护的文件夹，包含多份简历和求职相关素材，APP 自动读取 |
-| Agent | 负责特定任务的 AI 角色（生成/评审/转换/协调） |
-| Connection | 一组 API 凭证配置（供应商 + URL + Key + Model ID） |
-| Orchestrator | 协调 Agent，负责对话、JD 解析、合并多 Reviewer 评审 |
-| Generator | 生成 Agent，负责产出定制简历和求职信文本 |
-| Reviewer | 评审 Agent，对简历评分并提出修改意见（可多个并行） |
-| HTML Converter | 转换 Agent，将纯文本简历转为打印版 HTML |
-| Mock Mode | 仿真模式，使用预设数据模拟全流程，不消耗 API Token |
-| Token | AI API 的计费单位，与输入/输出文本长度成正比 |
-| 跨投递一致性检查 | 自动检测素材库中同公司历史投递，注入事实一致性约束，防止向同一公司提交矛盾的简历 |
-| previouslySubmitted | 前端检测到的同公司历史投递内容拼接字符串，作为参数传递给生成和评审 API |
+| **JD** | Job Description，职位描述 |
+| **素材库** | 用户本地文件夹，包含简历、求职信和职业素材。应用自动读取，用户自行维护 |
+| **Agent** | 负责特定任务的AI角色（生成/评审/转换/协调） |
+| **连接** | 一组已配置的API凭证（供应商 + URL + Key + Model ID） |
+| **Orchestrator** | 协调Agent——处理对话、JD解析、评审合并 |
+| **Generator** | 生成Agent——生成定制简历和求职信 |
+| **Reviewer** | 评审Agent——评审简历并打分（支持多个并行） |
+| **HTML Converter** | 转换Agent——将纯文本简历转为可打印HTML |
+| **仿真模式** | 使用预设数据模拟完整工作流，不消耗API token |
+| **Token** | AI API计费单位，与输入/输出文本长度成正比 |
+| **跨投递一致性** | 自动检测同公司历史投递，注入事实一致性约束 |
+| **差分模式** | 评审应用策略——AI输出`[REPLACE]`修改指令而非全量重写 |
+| **素材库摘要** | 段落去重、缓存后的素材库内容压缩表示 |
+| **PII脱敏** | 个人身份信息（姓名/电话/邮箱）在发送AI API前替换为占位符，返回后恢复 |
+
+---
+
+## License
+
+MIT
+
+---
+
+> **设计文档**：实现细节、变更记录和开发者指南，请参阅 **[DESIGN.md](./DESIGN.md)**。
