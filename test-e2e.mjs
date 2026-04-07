@@ -4,7 +4,8 @@
  */
 
 const BASE = 'http://localhost:3001/api';
-const GEMINI_KEY = process.env.GEMINI_KEY || 'AIzaSyCukZQglqofAtYzfjxntPnGTajXzpYJlZc';
+const GEMINI_KEY = process.env.GEMINI_KEY;
+if (!GEMINI_KEY) { console.error('请设置环境变量 GEMINI_KEY'); process.exit(1); }
 const MODEL = 'google-studio-google';
 
 const SAMPLE_JD = `职位名称：AI标注平台产品经理

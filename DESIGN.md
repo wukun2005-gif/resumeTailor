@@ -417,7 +417,7 @@ Mock 数据包含：
 
 - `.pages` 文件不支持自动解析，提示用户手动粘贴
 - Google AI Studio 需要 VPN（中国大陆网络限制）
-- `gemini-2.5-pro`/`gemini-3.1-pro-preview` 免费额度为 0，默认使用 `gemini-2.5-flash`
+- `gemini-2.5-pro`/`gemini-3.1-pro-preview` 免费额度为 0，默认使用 `gemini-3.1-flash-lite-preview`（30 RPM, 2000 RPD）
 - OpenAI-compat 的 PDF 多模态支持有限（转为文本占位符）
 - 加密基于浏览器指纹，更换浏览器会丢失已保存凭证
 - 应用数据存在 localStorage，清除浏览器数据会丢失所有配置
