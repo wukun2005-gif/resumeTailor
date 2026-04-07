@@ -2,6 +2,8 @@
 
 > 2026-04, wukun2005@gmail.com
 
+👉 **[点击这里查看项目的详细设计文档 (DESIGN.md)](./DESIGN.md)**
+
 ---
 
 ## 目录
