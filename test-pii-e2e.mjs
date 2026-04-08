@@ -59,14 +59,16 @@ function log(test, pass, detail = '') {
 async function parseSSE(response) {
   const text = await response.text();
   let result = '';
+  let error = null;
   for (const line of text.split('\n')) {
     if (!line.startsWith('data: ')) continue;
     try {
       const data = JSON.parse(line.slice(6));
       if (data.type === 'chunk') result += data.text;
-      if (data.type === 'error') throw new Error(data.message);
+      if (data.type === 'error') error = data.message;
     } catch {}
   }
+  if (!result && error) throw new Error(error);
   return result;
 }
 
@@ -76,6 +78,38 @@ async function postJSON(path, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+const delay = ms => new Promise(r => setTimeout(r, ms));
+
+/** Post JSON with automatic retry on rate limit errors (for SSE endpoints). */
+async function postWithRetry(path, body, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await postJSON(path, body);
+    const text = await res.text();
+    let result = '';
+    let error = null;
+    for (const line of text.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const data = JSON.parse(line.slice(6));
+        if (data.type === 'chunk') result += data.text;
+        if (data.type === 'error') error = data.message;
+      } catch {}
+    }
+    if (!result && error && (error.includes('配额') || error.includes('429'))) {
+      if (attempt < retries) {
+        const waitSec = 15 * (attempt + 1);
+        console.log(`  ⏳ Rate limited, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}...`);
+        await delay(waitSec * 1000);
+        continue;
+      }
+      throw new Error(error);
+    }
+    if (!result && error) throw new Error(error);
+    return result;
+  }
+  return '';
 }
 
 /**
@@ -103,7 +137,7 @@ async function testInit() {
   console.log('\n── 1. 初始化（含PII配置）──');
   const res = await postJSON('/init', {
     modelConnections: [
-      { id: 'google-studio-google', key: GEMINI_KEY, model: 'gemini-2.5-flash', label: 'Gemini Flash' }
+      { id: 'google-studio-google', key: GEMINI_KEY, model: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite' }
     ],
     allowedPaths: ['/tmp'],
     piiConfig: {
@@ -125,7 +159,7 @@ async function testInit() {
 
 async function testGenerate() {
   console.log('\n── 2. /generate（简历生成 + PII恢复）──');
-  const res = await postJSON('/generate', {
+  const result = await postWithRetry('/generate', {
     model: MODEL,
     jd: SAMPLE_JD,
     baseResume: SAMPLE_RESUME,
@@ -135,7 +169,6 @@ async function testGenerate() {
     generateNotes: false,
     previouslySubmitted: '',
   });
-  const result = await parseSSE(res);
   log('Generate有内容', result.length > 200, `length=${result.length}`);
   checkPiiRestored(result, 'Generate');
   return result;
@@ -143,7 +176,7 @@ async function testGenerate() {
 
 async function testReview(generatedResume) {
   console.log('\n── 3. /review（评审 + PII恢复）──');
-  const res = await postJSON('/review', {
+  const result = await postWithRetry('/review', {
     model: MODEL,
     jd: SAMPLE_JD,
     baseResume: SAMPLE_RESUME,
@@ -152,7 +185,6 @@ async function testReview(generatedResume) {
     instructions: '',
     previouslySubmitted: '',
   });
-  const result = await parseSSE(res);
   log('Review有内容', result.length > 100, `length=${result.length}`);
   checkPiiRestored(result, 'Review', false);  // Review输出通常不含联系信息
   return result;
@@ -160,40 +192,37 @@ async function testReview(generatedResume) {
 
 async function testApplyReview() {
   console.log('\n── 4. /apply-review（采纳修改 + PII恢复）──');
-  const res = await postJSON('/apply-review', {
+  const result = await postWithRetry('/apply-review', {
     model: MODEL,
     currentResume: SAMPLE_RESUME,
     reviewComments: '1. Summary需要更精炼\n2. 应突出AI平台经验',
     jd: SAMPLE_JD,
     previouslySubmitted: '',
   });
-  const result = await parseSSE(res);
   log('ApplyReview有内容', result.length > 50, `length=${result.length}`);
   checkPiiRestored(result, 'ApplyReview', false);  // Diff指令通常不含联系信息
 }
 
 async function testChat() {
   console.log('\n── 5. /chat（对话 + PII恢复）──');
-  const res = await postJSON('/chat', {
+  const result = await postWithRetry('/chat', {
     model: MODEL,
     chatType: 'generator',
     messages: [
       { role: 'user', content: `请帮我改进这份简历的Summary部分，要突出AI经验。\n\n${SAMPLE_RESUME}` },
     ],
   });
-  const result = await parseSSE(res);
   log('Chat有内容', result.length > 30, `length=${result.length}`);
   checkPiiRestored(result, 'Chat');
 }
 
 async function testGenerateHtml() {
   console.log('\n── 6. /generate-html（HTML生成 + PII恢复）──');
-  const res = await postJSON('/generate-html', {
+  const result = await postWithRetry('/generate-html', {
     model: MODEL,
     resumeText: SAMPLE_RESUME,
     htmlInstructions: '',
   });
-  const result = await parseSSE(res);
   log('HTML有内容', result.length > 100, `length=${result.length}`);
   checkPiiRestored(result, 'HTML');
 }
@@ -206,8 +235,7 @@ async function testExtractJdInfo() {
 }
 
 // ── Main ──
-const delay = ms => new Promise(r => setTimeout(r, ms));
-const RATE_LIMIT_DELAY = 4000; // 4s between API calls to respect Gemini free tier RPM
+const RATE_LIMIT_DELAY = 8000; // 8s between API calls to respect Gemini free tier RPM
 
 async function main() {
   console.log('╔═══════════════════════════════════════╗');

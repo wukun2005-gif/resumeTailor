@@ -14,6 +14,8 @@ export async function streamRequest(endpoint, body, onChunk) {
   const decoder = new TextDecoder();
   let buffer = '';
   let fullText = '';
+  let usage = { input: 0, output: 0 };
+  let model = '';
 
   while (true) {
     const { done, value } = await reader.read();
@@ -27,13 +29,17 @@ export async function streamRequest(endpoint, body, onChunk) {
         const data = JSON.parse(line.slice(6));
         if (data.type === 'chunk') { fullText += data.text; onChunk(data.text, fullText); }
         else if (data.type === 'error') throw new Error(data.message);
-        else if (data.type === 'done') return fullText;
+        else if (data.type === 'done') {
+          usage = data.usage || { input: 0, output: 0 };
+          model = data.model || '';
+          return { text: fullText, usage, model };
+        }
       } catch (e) {
         if (e.message && !e.message.includes('JSON')) throw e;
       }
     }
   }
-  return fullText;
+  return { text: fullText, usage, model };
 }
 
 export async function listFiles(dir) {
@@ -68,6 +74,28 @@ export async function initAPI(config) {
     body: JSON.stringify(config),
   });
   return res.json();
+}
+
+export async function listModels(connectionId) {
+  let res;
+  try {
+    res = await fetch('/api/list-models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connectionId }),
+    });
+  } catch (err) {
+    throw new Error('无法连接后端服务器，请确认 npm run dev 正在运行');
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error('后端服务器未响应（可能已崩溃），请重启 npm run dev');
+  }
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '获取模型列表失败');
+  return data;
 }
 
 export async function getLibraryDigest(dir, excludeNames = []) {

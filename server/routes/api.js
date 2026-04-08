@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { initGemini, callGemini } from '../services/gemini.js';
+import { initGemini, callGemini, listGeminiModels } from '../services/gemini.js';
 import { initAnthropic, callAnthropic } from '../services/anthropic.js';
 import { initOpenAICompat, callOpenAICompat } from '../services/openai-compat.js';
 import { readFileContent, listResumeFiles } from '../services/fileReader.js';
@@ -33,7 +33,7 @@ function setupSSE(res) {
 function sendSSE(res, data) { res.write(`data: ${JSON.stringify(data)}\n\n`); }
 
 /* ── Model connection registry ── */
-// Map of connectionId → { sdkType, label }
+// Map of connectionId → { sdkType, label, key, url, model }
 const connectionRegistry = new Map();
 
 /**
@@ -122,19 +122,19 @@ router.post('/init', (req, res) => {
         initOpenAICompat(id, url, key, model);
       }
 
-      connectionRegistry.set(id, { sdkType, label: conn.label || id });
+      connectionRegistry.set(id, { sdkType, label: conn.label || id, key, url, model });
       readyConnections.push(id);
     }
   } else {
     // Old format fallback
     if (geminiKey) {
       initGemini(geminiKey, geminiModel);
-      connectionRegistry.set('google-studio-google', { sdkType: 'google', label: 'Google AI Studio' });
+      connectionRegistry.set('google-studio-google', { sdkType: 'google', label: 'Google AI Studio', key: geminiKey, url: '', model: geminiModel });
       readyConnections.push('google-studio-google');
     }
     if (anthropicKey) {
       initAnthropic(anthropicBaseUrl, anthropicKey);
-      connectionRegistry.set('jiekou-anthropic', { sdkType: 'anthropic', label: 'Jiekou Anthropic' });
+      connectionRegistry.set('jiekou-anthropic', { sdkType: 'anthropic', label: 'Jiekou Anthropic', key: anthropicKey, url: anthropicBaseUrl, model: '' });
       readyConnections.push('jiekou-anthropic');
     }
   }
@@ -144,6 +144,26 @@ router.post('/init', (req, res) => {
   }
 
   res.json({ success: true, readyConnections });
+});
+
+router.post('/list-models', async (req, res) => {
+  try {
+    const { connectionId } = req.body;
+    if (!connectionId) return res.status(400).json({ error: '需要提供 connectionId' });
+
+    // Currently only supports google-studio-google
+    if (connectionId !== 'google-studio-google') {
+      return res.status(400).json({ error: '目前仅支持 google-studio-google' });
+    }
+
+    const conn = connectionRegistry.get(connectionId);
+    if (!conn) return res.status(400).json({ error: '连接未初始化，请先保存设置' });
+
+    const models = await listGeminiModels(conn.key);
+    res.json({ models });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/list-files', async (req, res) => {
@@ -221,9 +241,9 @@ router.post('/generate', async (req, res) => {
     const { system, user, userBlocks } = getResumeGenerationPrompt({ jd, originalResume: baseResume, resumeLibrary, instructions, previouslySubmitted, generateCoverLetter, generateNotes });
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
-    await caller(user, onChunk, { system, maxTokens: 8192, userBlocks });
+    const result = await caller(user, onChunk, { system, maxTokens: 8192, userBlocks });
     if (restorer) restorer.end();
-    sendSSE(res, { type: 'done' });
+    sendSSE(res, { type: 'done', usage: result.usage, model });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
   }
@@ -247,9 +267,9 @@ router.post('/review', async (req, res) => {
     const { system, user, userBlocks } = getReviewPrompt({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted });
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
-    await caller(user, onChunk, { system, maxTokens: 6144, userBlocks });
+    const result = await caller(user, onChunk, { system, maxTokens: 6144, userBlocks });
     if (restorer) restorer.end();
-    sendSSE(res, { type: 'done' });
+    sendSSE(res, { type: 'done', usage: result.usage, model });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
   }
@@ -277,19 +297,19 @@ router.post('/review-multi', async (req, res) => {
     const results = await Promise.all(models.map(async (model) => {
       const caller = getModelCaller(model);
       const result = await caller(user, () => {}, { system, maxTokens: 3072, userBlocks });
-      return { model, result };
+      return { model, text: result.text, usage: result.usage };
     }));
 
     // Merge using orchestrator (with system message for Anthropic caching)
     sendSSE(res, { type: 'chunk', text: '--- 正在合并评审意见 ---\n\n' });
-    const { system: mergeSystem, user: mergeUser } = getReviewMergePrompt(results.map(r => ({ model: r.model, label: getConnectionLabel(r.model), review: r.result })));
+    const { system: mergeSystem, user: mergeUser } = getReviewMergePrompt(results.map(r => ({ model: r.model, label: getConnectionLabel(r.model), review: r.text })));
     const mergeCaller = getModelCaller(orchestratorModel);
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
-    await mergeCaller(mergeUser, onChunk, { system: mergeSystem, maxTokens: 4096 });
+    const mergeResult = await mergeCaller(mergeUser, onChunk, { system: mergeSystem, maxTokens: 4096 });
     if (restorer) restorer.end();
 
-    sendSSE(res, { type: 'done' });
+    sendSSE(res, { type: 'done', usage: mergeResult.usage, model: orchestratorModel });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
   }
@@ -312,9 +332,9 @@ router.post('/apply-review', async (req, res) => {
     const { system, user } = getApplyReviewPrompt({ currentResume, reviewComments, jd, previouslySubmitted });
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
-    await caller(user, onChunk, { system, maxTokens: 4096 });
+    const result = await caller(user, onChunk, { system, maxTokens: 4096 });
     if (restorer) restorer.end();
-    sendSSE(res, { type: 'done' });
+    sendSSE(res, { type: 'done', usage: result.usage, model });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
   }
@@ -339,9 +359,9 @@ router.post('/chat', async (req, res) => {
     const caller = getModelCaller(model);
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
-    await caller(null, onChunk, { messages, maxTokens: config.maxTokens, system: config.system });
+    const result = await caller(null, onChunk, { messages, maxTokens: config.maxTokens, system: config.system });
     if (restorer) restorer.end();
-    sendSSE(res, { type: 'done' });
+    sendSSE(res, { type: 'done', usage: result.usage, model });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
   }
@@ -361,9 +381,9 @@ router.post('/generate-html', async (req, res) => {
     const { system, user } = getHtmlGenerationPrompt({ resumeText, formatRequirements: htmlInstructions, hyperlinks });
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
-    await caller(user, onChunk, { system, maxTokens: 8192 });
+    const result = await caller(user, onChunk, { system, maxTokens: 8192 });
     if (restorer) restorer.end();
-    sendSSE(res, { type: 'done' });
+    sendSSE(res, { type: 'done', usage: result.usage, model });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
   }
@@ -380,19 +400,35 @@ router.post('/extract-jd-info', async (req, res) => {
     }
     const { model, jd } = req.body;
     const caller = getModelCaller(model);
-    const prompt = `从以下JD中提取公司名、部门名、职位名称、和JD语言。只输出JSON格式，不要输出任何其他内容：
-{"company":"公司英文名","department":"部门英文名","title":"职位英文名","language":"en或zh"}
-如果是中文JD，company/department/title也用中文。如果找不到某个字段就留空字符串""。
+    const prompt = `你的任务是从招聘JD中精确提取关键信息。
 
-JD:
+【必须输出的内容】
+只输出一个JSON对象，包含以下字段，不要有任何其他文本：
+{
+  "company": "公司名称",
+  "department": "部门名称（如果有）",
+  "title": "职位名称",
+  "language": "zh或en"
+}
+
+【提取规则】
+1. company: 从JD中找公司名。如果是中文JD用中文，英文JD用英文
+2. department: 部门或团队名。没有则留空
+3. title: 职位标题。MUST FROM JD
+4. language: zh表示中文JD，en表示英文JD
+5. 任何找不到的字段都用空字符串""表示
+
+【重要】只输出JSON，不要任何解释或额外文本。
+
+我要处理的JD：
 ${jd}`;
     const result = await caller(prompt, () => {}, { maxTokens: 256, jsonMode: true });
     // Robust JSON extraction: strip code fences, then find first {...}
-    let cleaned = result.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
+    let cleaned = result.text.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
     const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('No JSON found');
     const info = JSON.parse(jsonMatch[0]);
-    res.json(info);
+    res.json({ ...info, usage: result.usage });
   } catch (err) {
     res.json({ company: '', department: '', title: '', language: 'en' });
   }

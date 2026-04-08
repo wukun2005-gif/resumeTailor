@@ -47,14 +47,16 @@ function log(test, pass, detail = '') {
 async function parseSSE(response) {
   const text = await response.text();
   let result = '';
+  let error = null;
   for (const line of text.split('\n')) {
     if (!line.startsWith('data: ')) continue;
     try {
       const data = JSON.parse(line.slice(6));
       if (data.type === 'chunk') result += data.text;
-      if (data.type === 'error') throw new Error(data.message);
+      if (data.type === 'error') error = data.message;
     } catch {}
   }
+  if (!result && error) throw new Error(error);
   return result;
 }
 
@@ -67,12 +69,53 @@ async function postJSON(path, body) {
   return res;
 }
 
+/** Post JSON with automatic retry on rate limit errors (for SSE endpoints). */
+async function postWithRetry(path, body, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await postJSON(path, body);
+    const text = await res.text();
+
+    // Check if it's a rate limit error
+    if (text.includes('配额不足') || text.includes('429') || text.includes('RESOURCE_EXHAUSTED')) {
+      if (attempt < retries) {
+        const waitSec = 15 * (attempt + 1);
+        console.log(`  ⏳ Rate limited, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}...`);
+        await delay(waitSec * 1000);
+        continue;
+      }
+    }
+
+    // Parse SSE from the text we already read
+    let result = '';
+    let error = null;
+    for (const line of text.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const data = JSON.parse(line.slice(6));
+        if (data.type === 'chunk') result += data.text;
+        if (data.type === 'error') error = data.message;
+      } catch {}
+    }
+    if (!result && error) {
+      if (attempt < retries && (error.includes('配额') || error.includes('429'))) {
+        const waitSec = 15 * (attempt + 1);
+        console.log(`  ⏳ Rate limited, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}...`);
+        await delay(waitSec * 1000);
+        continue;
+      }
+      throw new Error(error);
+    }
+    return result;
+  }
+  return '';
+}
+
 // ── Tests ──
 
 async function testInit() {
   const res = await postJSON('/init', {
     modelConnections: [
-      { id: 'google-studio-google', key: GEMINI_KEY, model: 'gemini-2.5-flash', label: 'Gemini Flash' }
+      { id: 'google-studio-google', key: GEMINI_KEY, model: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite' }
     ],
     allowedPaths: ['/tmp']
   });
@@ -90,7 +133,7 @@ async function testExtractJdInfo() {
 }
 
 async function testGenerate() {
-  const res = await postJSON('/generate', {
+  const result = await postWithRetry('/generate', {
     model: MODEL,
     jd: SAMPLE_JD,
     baseResume: SAMPLE_RESUME,
@@ -99,7 +142,6 @@ async function testGenerate() {
     generateCoverLetter: true,
     previouslySubmitted: '',
   });
-  const result = await parseSSE(res);
   const hasResumeMarker = result.includes('简历正文');
   const hasCoverLetter = result.includes('求职信');
   const hasNotes = result.includes('AI备注');
@@ -115,7 +157,7 @@ async function testGenerate() {
 }
 
 async function testGenerateNoNotes() {
-  const res = await postJSON('/generate', {
+  const result = await postWithRetry('/generate', {
     model: MODEL,
     jd: SAMPLE_JD,
     baseResume: SAMPLE_RESUME,
@@ -124,13 +166,12 @@ async function testGenerateNoNotes() {
     generateCoverLetter: false,
     generateNotes: false,
   });
-  const result = await parseSSE(res);
   const hasNotes = result.includes('AI备注');
   log('4. /generate generateNotes=false', !hasNotes, `hasNotes=${hasNotes}, len=${result.length}`);
 }
 
 async function testReview(generatedResume) {
-  const res = await postJSON('/review', {
+  const result = await postWithRetry('/review', {
     model: MODEL,
     jd: SAMPLE_JD,
     baseResume: SAMPLE_RESUME,
@@ -139,7 +180,6 @@ async function testReview(generatedResume) {
     instructions: '',
     previouslySubmitted: '',
   });
-  const result = await parseSSE(res);
   const hasScore = /\d{1,3}/.test(result);
   log('5. /review has content', result.length > 200, `length=${result.length}`);
   log('5b. /review has score', hasScore);
@@ -148,13 +188,12 @@ async function testReview(generatedResume) {
 }
 
 async function testApplyReview(reviewComments) {
-  const res = await postJSON('/apply-review', {
+  const result = await postWithRetry('/apply-review', {
     model: MODEL,
     currentResume: SAMPLE_RESUME,
     reviewComments: reviewComments || '1. Summary需要更精炼\n2. 需要增加数据标注相关经验的描述',
     jd: SAMPLE_JD,
   });
-  const result = await parseSSE(res);
   const hasReplace = result.includes('[REPLACE]');
   log('6. /apply-review has REPLACE blocks', hasReplace, `len=${result.length}`);
 
@@ -180,24 +219,22 @@ async function testApplyReview(reviewComments) {
 }
 
 async function testChat() {
-  const res = await postJSON('/chat', {
+  const result = await postWithRetry('/chat', {
     model: MODEL,
     chatType: 'review',
     messages: [
       { role: 'user', content: '请问这份简历的Summary部分有什么需要改进的？\n\n简历：\n' + SAMPLE_RESUME },
     ],
   });
-  const result = await parseSSE(res);
   log('7. /chat review type', result.length > 50, `len=${result.length}`);
 }
 
 async function testGenerateHtml() {
-  const res = await postJSON('/generate-html', {
+  const result = await postWithRetry('/generate-html', {
     model: MODEL,
     resumeText: SAMPLE_RESUME,
     htmlInstructions: '',
   });
-  const result = await parseSSE(res);
   // AI should output body content only (no <html>, <head>, <style>)
   const hasHtmlTag = /<html/i.test(result);
   const hasBodyContent = result.includes('<h1') || result.includes('<h2') || result.includes('<p');
@@ -208,7 +245,7 @@ async function testGenerateHtml() {
 // ── Main ──
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
-const RATE_LIMIT_DELAY = 4000; // 4s between API calls to respect Gemini free tier RPM
+const RATE_LIMIT_DELAY = 8000; // 8s between API calls to respect Gemini free tier RPM (10 RPM)
 
 async function main() {
   console.log('\n=== 简历定制助手 E2E Test ===\n');

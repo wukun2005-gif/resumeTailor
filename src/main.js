@@ -62,17 +62,18 @@ const els = {
   manualResumeRow: $('manualResumeRow'), manualResumeInput: $('manualResumeInput'),
   genInstructions: $('genInstructions'), htmlInstructions: $('htmlInstructions'), generateCoverLetter: $('generateCoverLetter'),
   generateBtn: $('generateBtn'), outputSection: $('outputSection'),
-  resumeOutput: $('resumeOutput'), resumeStatus: $('resumeStatus'),
+  resumeOutput: $('resumeOutput'), resumeStatus: $('resumeStatus'), resumeTokenInfo: $('resumeTokenInfo'),
   saveResumeBtn: $('saveResumeBtn'), regenerateBtn: $('regenerateBtn'),
   saveFilenameRow: $('saveFilenameRow'), saveFilename: $('saveFilename'), confirmSaveBtn: $('confirmSaveBtn'), cancelSaveBtn: $('cancelSaveBtn'),
-  reviewBtn: $('reviewBtn'), reviewOutput: $('reviewOutput'), reviewStatus: $('reviewStatus'),
+  reviewBtn: $('reviewBtn'), reviewOutput: $('reviewOutput'), reviewStatus: $('reviewStatus'), reviewTokenInfo: $('reviewTokenInfo'),
   applyReviewBtn: $('applyReviewBtn'),
   chatHistory: $('chatHistory'), chatInput: $('chatInput'), chatSendBtn: $('chatSendBtn'),
   genNotesSection: $('genNotesSection'), genNotesOutput: $('genNotesOutput'),
   genChatSection: $('genChatSection'), genChatHistory: $('genChatHistory'), genChatInput: $('genChatInput'), genChatSendBtn: $('genChatSendBtn'),
   generateHtmlBtn: $('generateHtmlBtn'), htmlStatus: $('htmlStatus'),
   htmlChatSection: $('htmlChatSection'), htmlChatHistory: $('htmlChatHistory'), htmlChatInput: $('htmlChatInput'), htmlChatSendBtn: $('htmlChatSendBtn'),
-  htmlPdfUpload: $('htmlPdfUpload'), htmlUploadStatus: $('htmlUploadStatus'),
+  htmlPdfUpload: $('htmlPdfUpload'), htmlUploadStatus: $('htmlUploadStatus'), htmlTokenInfo: $('htmlTokenInfo'),
+  sessionTotalInfo: $('sessionTotalInfo'),
   // PII config
   cfgPiiEnabled: $('cfgPiiEnabled'),
   cfgPiiNameEn: $('cfgPiiNameEn'), cfgPiiNameZh: $('cfgPiiNameZh'), cfgPiiNameVariants: $('cfgPiiNameVariants'),
@@ -92,6 +93,15 @@ let htmlChatMessages = []; // HTML chat context
 let lastHtmlContent = ''; // Last generated HTML for chat context
 let uploadedFileData = null; // { mimeType, data } for PDF/image upload
 let baseResumeCache = new Map(); // key=filename, value={content, modified}
+
+/* ── Session Token & Cost Tracking ── */
+let sessionUsage = { totalInput: 0, totalOutput: 0, totalCost: 0 };
+const PRICING = {
+  'google-studio-google': { input: 0, output: 0, note: '免费额度' },
+  'jiekou-anthropic': { input: 15 / 1000000, output: 75 / 1000000, note: 'Anthropic' },
+  'jiekou-openai': { input: 2.5 / 1000000, output: 10 / 1000000, note: 'OpenAI' },
+  'jiekou-google': { input: 0.075 / 1000000, output: 0.3 / 1000000, note: 'Google' },
+};
 
 /* ── Model Connection Definitions ── */
 const MODEL_CONNECTIONS = [
@@ -142,6 +152,76 @@ function populateAgentDropdowns() {
 
 function getSelectedReviewers() {
   return [...els.cfgAgentReviewers.querySelectorAll('input:checked')].map(cb => cb.value);
+}
+
+/* ── Token & Cost Utilities ── */
+function formatUsage(usage, model) {
+  if (!usage) return '';
+  const pricing = PRICING[model] || { input: 0, output: 0, note: '未知模型' };
+  const cost = (usage.input || 0) * pricing.input + (usage.output || 0) * pricing.output;
+  const inp = (usage.input || 0).toLocaleString();
+  const out = (usage.output || 0).toLocaleString();
+  if (pricing.input === 0 && pricing.output === 0) {
+    return `输入: ${inp} | 输出: ${out} tokens · (${pricing.note})`;
+  } else {
+    return `输入: ${inp} | 输出: ${out} tokens · $${cost.toFixed(4)}`;
+  }
+}
+
+function updateSessionTotal() {
+  if (!els.sessionTotalInfo) return;
+  if (sessionUsage.totalInput === 0 && sessionUsage.totalOutput === 0) {
+    els.sessionTotalInfo.textContent = '';
+  } else {
+    const inp = sessionUsage.totalInput.toLocaleString();
+    const out = sessionUsage.totalOutput.toLocaleString();
+    const cost = sessionUsage.totalCost.toFixed(4);
+    els.sessionTotalInfo.textContent = `本次: 输入 ${inp} | 输出 ${out} · $${cost}`;
+  }
+}
+
+/* ── Gemini Model Discovery ── */
+async function fetchGeminiModels() {
+  try {
+    const response = await api.listModels('google-studio-google');
+    const { models } = response;
+
+    const tbody = document.getElementById('geminiModelListBody');
+    tbody.innerHTML = models.map(m => {
+      const rpmStr = `${m.rateLimits.rpm}/${m.rateLimits.rpm}`;
+      const rpdStr = `${m.rateLimits.rpd}/${m.rateLimits.rpd}`;
+      const tpmStr = m.rateLimits.tpm > 0 ? (m.rateLimits.tpm / 1000000).toFixed(1) + 'M' : '-';
+      return `
+        <tr style="border-bottom:1px solid #eee;">
+          <td style="padding:4px;">${m.recommendation}</td>
+          <td style="padding:4px;"><code style="font-size:0.8rem;">${m.id}</code></td>
+          <td style="padding:4px;font-size:0.75rem;">RPM ${rpmStr} / RPD ${rpdStr} / TPM ${tpmStr}</td>
+          <td style="padding:4px;">
+            <button class="btn-secondary btn-sm" data-select-model="${m.id}" style="padding:2px 8px;font-size:0.75rem;">选择</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    // Use event delegation for select buttons (module scope can't use inline onclick)
+    tbody.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-select-model]');
+      if (btn) selectGeminiModel(btn.dataset.selectModel);
+    });
+
+    const modelList = document.getElementById('geminiModelList');
+    modelList.style.display = '';
+  } catch (e) {
+    alert('获取模型列表失败: ' + e.message);
+  }
+}
+
+function selectGeminiModel(modelId) {
+  const modelInput = getConnInput('google-studio-google', 'model');
+  if (modelInput) {
+    modelInput.value = modelId;
+    populateAgentDropdowns();
+  }
 }
 
 /* ── Init ── */
@@ -309,6 +389,8 @@ function bindEvents() {
   els.htmlChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doHtmlChat(); } });
   els.htmlPdfUpload.addEventListener('change', handlePdfUpload);
   els.mockMode.addEventListener('change', () => state.set('mockMode', els.mockMode.checked));
+  const geminiQueryBtn = document.getElementById('geminiQueryModelsBtn');
+  if (geminiQueryBtn) geminiQueryBtn.addEventListener('click', fetchGeminiModels);
   // Update agent dropdowns when connection keys change
   for (const def of MODEL_CONNECTIONS) {
     const keyInput = getConnInput(def.id, 'key');
@@ -753,7 +835,8 @@ async function doGenerate() {
     });
 
     // After streaming done, parse and separate
-    const { resumeBody, notes } = parseGeneratedOutput(rawOutput);
+    const resOutput = rawOutput.text || rawOutput; // backward compat
+    const { resumeBody, notes } = parseGeneratedOutput(resOutput);
     els.resumeOutput.value = resumeBody;
 
     if (notes) {
@@ -765,8 +848,18 @@ async function doGenerate() {
     // Init generator chat context after generation
     genChatMessages = [
       { role: 'user', content: `请根据JD和简历素材生成简历。\n\nJD:\n${jd}\n\n基础简历:\n${resume}` },
-      { role: 'assistant', content: rawOutput },
+      { role: 'assistant', content: resOutput },
     ];
+
+    // Display token usage
+    if (rawOutput.usage && els.resumeTokenInfo) {
+      els.resumeTokenInfo.textContent = formatUsage(rawOutput.usage, model);
+      sessionUsage.totalInput += (rawOutput.usage.input || 0);
+      sessionUsage.totalOutput += (rawOutput.usage.output || 0);
+      const pricing = PRICING[model] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (rawOutput.usage.input || 0) * pricing.input + (rawOutput.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
 
     els.resumeStatus.textContent = '生成完成，正在自动保存...';
     els.resumeStatus.className = 'status-bar';
@@ -899,8 +992,19 @@ async function doReview() {
 
     chatMessages = [
       { role: 'user', content: `请对以下简历进行评审：\n\nJD:\n${els.jdInput.value}\n\n简历:\n${resume}` },
-      { role: 'assistant', content: result },
+      { role: 'assistant', content: result.text || result },
     ];
+
+    // Display token usage
+    if (result.usage && els.reviewTokenInfo) {
+      els.reviewTokenInfo.textContent = formatUsage(result.usage, result.model);
+      sessionUsage.totalInput += (result.usage.input || 0);
+      sessionUsage.totalOutput += (result.usage.output || 0);
+      const pricing = PRICING[result.model] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
+
     els.reviewStatus.textContent = 'Review 完成';
     els.reviewStatus.className = 'status-bar';
     els.applyReviewBtn.disabled = false;
@@ -916,24 +1020,38 @@ async function doReview() {
 
 /**
  * Parse AI's diff output into an array of {old, new} replacement pairs.
- * Format: [REPLACE]<<<old text>>>new text[/REPLACE]
- * Tolerates variations: extra whitespace, missing newlines, markdown fences.
+ * Tolerates many variations: extra whitespace, newlines, formatting differences.
  */
 function parseDiffOutput(text) {
   const diffs = [];
-  // Primary regex: strict format with newlines
-  const strict = /\[REPLACE\]\s*\n<<<\n([\s\S]*?)\n>>>\n([\s\S]*?)\n\[\/REPLACE\]/g;
+
+  // Strategy 1: Strict format with newlines
+  let strict = /\[REPLACE\]\s*\n<<<\n([\s\S]*?)\n>>>\n([\s\S]*?)\n\[\/REPLACE\]/g;
   let match;
   while ((match = strict.exec(text)) !== null) {
-    diffs.push({ old: match[1], new: match[2] });
+    const old = match[1].trim();
+    const newText = match[2].trim();
+    if (old) diffs.push({ old, new: newText });
   }
   if (diffs.length > 0) return diffs;
 
-  // Fallback regex: more lenient (optional newlines, whitespace around delimiters)
-  const lenient = /\[REPLACE\]\s*<<<\s*([\s\S]*?)\s*>>>\s*([\s\S]*?)\s*\[\/REPLACE\]/g;
+  // Strategy 2: Lenient format (flexible whitespace/newlines)
+  let lenient = /\[REPLACE\]\s*<<<\s*([\s\S]*?)\s*>>>\s*([\s\S]*?)\s*\[\/REPLACE\]/g;
   while ((match = lenient.exec(text)) !== null) {
-    if (match[1].trim()) diffs.push({ old: match[1].trim(), new: match[2].trim() });
+    const old = match[1].trim();
+    const newText = match[2].trim();
+    if (old) diffs.push({ old, new: newText });
   }
+  if (diffs.length > 0) return diffs;
+
+  // Strategy 3: Alternative delimiters (<<<< and >>>>)
+  let alt = /\[REPLACE\]\s*<<<<\s*([\s\S]*?)\s*>>>>\s*([\s\S]*?)\s*\[\/REPLACE\]/g;
+  while ((match = alt.exec(text)) !== null) {
+    const old = match[1].trim();
+    const newText = match[2].trim();
+    if (old) diffs.push({ old, new: newText });
+  }
+
   return diffs;
 }
 
@@ -1013,7 +1131,17 @@ async function doApplyReview() {
       els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;
     });
 
-    const diffs = parseDiffOutput(diffOutput);
+    // Display token usage
+    if (diffOutput.usage && els.resumeTokenInfo) {
+      els.resumeTokenInfo.textContent = formatUsage(diffOutput.usage, model);
+      sessionUsage.totalInput += (diffOutput.usage.input || 0);
+      sessionUsage.totalOutput += (diffOutput.usage.output || 0);
+      const pricing = PRICING[model] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (diffOutput.usage.input || 0) * pricing.input + (diffOutput.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
+
+    const diffs = parseDiffOutput(diffOutput.text || diffOutput);
 
     if (diffs.length > 0) {
       // Apply diffs to the original resume
@@ -1058,7 +1186,17 @@ async function doApplyReview() {
         els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;
       });
 
-      const { resumeBody } = parseGeneratedOutput(rawOutput);
+      // Display token usage
+      if (rawOutput.usage && els.resumeTokenInfo) {
+        els.resumeTokenInfo.textContent = formatUsage(rawOutput.usage, model);
+        sessionUsage.totalInput += (rawOutput.usage.input || 0);
+        sessionUsage.totalOutput += (rawOutput.usage.output || 0);
+        const pricing = PRICING[model] || { input: 0, output: 0 };
+        sessionUsage.totalCost += (rawOutput.usage.input || 0) * pricing.input + (rawOutput.usage.output || 0) * pricing.output;
+        updateSessionTotal();
+      }
+
+      const { resumeBody } = parseGeneratedOutput(rawOutput.text || rawOutput);
       els.resumeOutput.value = resumeBody;
 
       els.resumeStatus.textContent = '更新完成（全量重生成），正在自动保存...';
@@ -1108,15 +1246,25 @@ async function doGenChat() {
       aiDiv.textContent = full;
       els.genChatHistory.scrollTop = els.genChatHistory.scrollHeight;
     });
-    genChatMessages.push({ role: 'assistant', content: result });
+    genChatMessages.push({ role: 'assistant', content: result.text || result });
+
+    // Display token usage
+    if (result.usage && els.resumeTokenInfo) {
+      els.resumeTokenInfo.textContent = formatUsage(result.usage, result.model || state.get('generatorModel', 'jiekou-anthropic'));
+      sessionUsage.totalInput += (result.usage.input || 0);
+      sessionUsage.totalOutput += (result.usage.output || 0);
+      const pricing = PRICING[result.model || state.get('generatorModel', 'jiekou-anthropic')] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
 
     // If AI returned updated resume content, sync to resume editing area
-    const { resumeBody, notes } = parseGeneratedOutput(result);
-    if (result.includes('简历正文') && resumeBody) {
+    const { resumeBody, notes } = parseGeneratedOutput(result.text || result);
+    if ((result.text || result).includes('简历正文') && resumeBody) {
       els.resumeOutput.value = resumeBody;
       if (notes) els.genNotesOutput.value = notes;
       els.resumeStatus.textContent = '简历已根据对话更新';
-    } else if (looksLikeResume(result)) {
+    } else if (looksLikeResume(result.text || result)) {
       els.resumeOutput.value = result;
       els.resumeStatus.textContent = '简历已根据对话更新（请检查内容）';
     }
@@ -1161,11 +1309,21 @@ async function doChat() {
       aiDiv.textContent = full;
       els.chatHistory.scrollTop = els.chatHistory.scrollHeight;
     });
-    chatMessages.push({ role: 'assistant', content: result });
+    chatMessages.push({ role: 'assistant', content: result.text || result });
+
+    // Display token usage
+    if (result.usage && els.reviewTokenInfo) {
+      els.reviewTokenInfo.textContent = formatUsage(result.usage, result.model || state.get('orchestratorModel', 'jiekou-anthropic'));
+      sessionUsage.totalInput += (result.usage.input || 0);
+      sessionUsage.totalOutput += (result.usage.output || 0);
+      const pricing = PRICING[result.model || state.get('orchestratorModel', 'jiekou-anthropic')] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
 
     // If AI returned updated review, sync to review output area
-    if (looksLikeReview(result)) {
-      els.reviewOutput.value = result;
+    if (looksLikeReview(result.text || result)) {
+      els.reviewOutput.value = result.text || result;
       els.reviewStatus.textContent = '评审已根据对话更新';
     }
   } catch (e) {
@@ -1197,14 +1355,25 @@ async function doGenerateHtml() {
   let htmlContent = '';
   try {
     const model = state.get('htmlModel', 'google-studio-google');
-    let bodyContent = await api.streamRequest('/api/generate-html', {
+    let result = await api.streamRequest('/api/generate-html', {
       model, mock: els.mockMode.checked,
       resumeText: resume,
       htmlInstructions: els.htmlInstructions.value,
     }, (chunk, full) => { htmlContent = full; });
 
-    // Clean: extract body content from possible markdown code fences or full HTML
+    // Extract and clean body content from result
+    let bodyContent = result.text || result;
     bodyContent = bodyContent.replace(/^```html?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+
+    // Display token usage
+    if (result.usage && els.htmlTokenInfo) {
+      els.htmlTokenInfo.textContent = formatUsage(result.usage, model);
+      sessionUsage.totalInput += (result.usage.input || 0);
+      sessionUsage.totalOutput += (result.usage.output || 0);
+      const pricing = PRICING[model] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
 
     // If AI returned full HTML despite instructions, extract just the body
     const bodyMatch = bodyContent.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
@@ -1312,11 +1481,21 @@ async function doHtmlChat() {
       aiDiv.textContent = full;
       els.htmlChatHistory.scrollTop = els.htmlChatHistory.scrollHeight;
     });
-    htmlChatMessages.push({ role: 'assistant', content: result });
+    htmlChatMessages.push({ role: 'assistant', content: result.text || result });
+
+    // Display token usage
+    if (result.usage && els.htmlTokenInfo) {
+      els.htmlTokenInfo.textContent = formatUsage(result.usage, model);
+      sessionUsage.totalInput += (result.usage.input || 0);
+      sessionUsage.totalOutput += (result.usage.output || 0);
+      const pricing = PRICING[model] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
 
     // If AI returned HTML, offer to download updated version
-    if (result.includes('<!DOCTYPE') || result.includes('<html')) {
-      let newHtml = result.replace(/^```html?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+    if ((result.text || result).includes('<!DOCTYPE') || (result.text || result).includes('<html')) {
+      let newHtml = (result.text || result).replace(/^```html?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
       // Extract HTML if mixed with text
       const htmlStart = newHtml.indexOf('<!DOCTYPE');
       const htmlStartAlt = newHtml.indexOf('<html');

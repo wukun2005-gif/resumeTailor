@@ -241,36 +241,35 @@ export function getHtmlGenerationPrompt({ resumeText, formatRequirements, hyperl
 const APPLY_REVIEW_SYSTEM = `你是一位简历修改助手。根据评审意见，对简历进行精确的局部修改。只输出需要修改的部分，使用结构化的替换指令格式。`;
 
 export function getApplyReviewPrompt({ currentResume, reviewComments, jd, previouslySubmitted }) {
-  let prompt = `根据以下评审意见，对当前简历进行修改。
+  let prompt = `你是简历修改专家。MUST输出修改指令，格式如下：
 
-【输出格式要求 - 必须严格遵守】：
-只输出修改列表，使用以下格式。每处修改一个 [REPLACE] 块：
+====== 修改指令 ======
+对于每处修改，MUST使用EXACTLY这个格式：
 
-===== 修改列表 =====
 [REPLACE]
 <<<
-需要替换的原始文本（必须精确匹配当前简历中的文字）
+原始文本（逐字逐句与简历一致）
 >>>
-替换后的新文本
+修改后的新文本
 [/REPLACE]
 
-注意事项：
-- <<<和>>>之间的原始文本必须能在当前简历中精确找到
-- 每个 [REPLACE] 块只修改一处
-- 不需要修改的地方不要动
-- 不要输出完整简历，只输出修改指令
-- 如果评审意见建议删除某段，将替换后文本留空即可
+CRITICAL约束：
+✓ <<<和>>>必须单独一行
+✓ [REPLACE]和[/REPLACE]必须单独一行
+✓ 每个修改一个块，连续输出，不要添加其他文字
+✓ 原始文本MUST能在简历中找到（逐字逐句）
 
-===== 当前简历 =====
+当前简历：
 ${currentResume}
 
-===== 评审修改意见 =====
+修改意见：
 ${reviewComments}
 `;
-  if (jd) prompt += `\n===== JD（参考）=====\n${jd}\n`;
+  if (jd) prompt += `\n参考JD：\n${jd}\n`;
   if (previouslySubmitted) {
-    prompt += `\n===== 已投递同公司简历（一致性约束）=====\n${previouslySubmitted}\n`;
+    prompt += `\n一致性约束（已投递同公司简历）：\n${previouslySubmitted}\n`;
   }
+  prompt += `\n立即输出修改指令。`;
   return { system: APPLY_REVIEW_SYSTEM, user: prompt };
 }
 

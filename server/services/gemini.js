@@ -10,6 +10,67 @@ export function initGemini(apiKey, model) {
 
 export function isGeminiReady() { return client !== null; }
 
+export async function listGeminiModels(apiKey) {
+  if (!apiKey) throw new Error('需要提供 API Key');
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error?.message || `API 返回错误: ${response.status}`);
+    }
+
+    const models = [];
+    for (const model of data.models || []) {
+      // Filter for generateContent support
+      if (!model.supportedGenerationMethods?.includes('generateContent')) continue;
+
+      // Extract model info
+      const rateLimits = model.inputTokenLimit ? {
+        rpm: model.displayName?.includes('flash-lite') ? 30 : (model.displayName?.includes('pro') ? 2 : 15),
+        rpd: model.displayName?.includes('flash-lite') ? 2000 : (model.displayName?.includes('pro') ? 50 : 1500),
+        tpm: model.inputTokenLimit * 10, // rough estimate
+      } : { rpm: 0, rpd: 0, tpm: 0 };
+
+      // Auto-tag recommendation
+      let recommendation = '通用模型';
+      if (model.displayName?.includes('flash-lite')) {
+        recommendation = '最推荐 (速度极快、配额最高)';
+      } else if (model.displayName?.includes('3.1-flash')) {
+        recommendation = '综合能力最强';
+      } else if (model.displayName?.includes('pro')) {
+        recommendation = '高级能力 (需付费)';
+      } else if (model.displayName?.includes('1.5')) {
+        recommendation = '已下线/受限';
+      }
+
+      models.push({
+        id: model.name.replace('models/', ''),
+        displayName: model.displayName || model.name,
+        inputTokenLimit: model.inputTokenLimit || 0,
+        outputTokenLimit: model.outputTokenLimit || 0,
+        rateLimits,
+        recommendation,
+      });
+    }
+
+    return models.sort((a, b) => {
+      // Sort by recommendation priority
+      const priority = {
+        '最推荐 (速度极快、配额最高)': 0,
+        '综合能力最强': 1,
+        '通用模型': 2,
+        '高级能力 (需付费)': 3,
+        '已下线/受限': 4,
+      };
+      return (priority[a.recommendation] || 99) - (priority[b.recommendation] || 99);
+    });
+  } catch (err) {
+    throw new Error(`列出 Gemini 模型失败: ${err.message}`);
+  }
+}
+
 export async function callGemini(prompt, onChunk, opts = {}) {
   if (!client) throw new Error('Gemini API 未配置');
 
@@ -61,10 +122,16 @@ export async function callGemini(prompt, onChunk, opts = {}) {
   }
 
   let fullText = '';
+  let usage = { input: 0, output: 0 };
   for await (const chunk of response) {
     const text = chunk.text || '';
     fullText += text;
     if (onChunk) onChunk(text);
+    // Capture usage metadata from the last chunk
+    if (chunk.usageMetadata) {
+      usage.input = chunk.usageMetadata.promptTokenCount || 0;
+      usage.output = chunk.usageMetadata.candidatesTokenCount || 0;
+    }
   }
-  return fullText;
+  return { text: fullText, usage };
 }

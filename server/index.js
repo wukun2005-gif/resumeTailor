@@ -26,6 +26,26 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+
+const server = app.listen(PORT, () => {
   console.log(`简历定制助手 Server: http://localhost:${PORT}`);
 });
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ 端口 ${PORT} 已被占用！`);
+    console.error(`   请在终端执行以下命令终止旧进程：`);
+    console.error(`   lsof -i :${PORT} | awk 'NR>1{print $2}' | xargs kill -9\n`);
+    process.exit(1);
+  }
+  throw err;
+});
+
+// Graceful shutdown: release port on SIGINT/SIGTERM
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    server.close(() => process.exit(0));
+    // Force exit after 3s if connections don't close
+    setTimeout(() => process.exit(0), 3000);
+  });
+}

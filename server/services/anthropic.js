@@ -65,13 +65,18 @@ export async function callAnthropic(prompt, onChunk, opts = {}) {
 
   const stream = client.messages.stream(params);
   let fullText = '';
+  let usage = { input: 0, output: 0 };
 
   for await (const event of stream) {
     if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
       const text = event.delta.text;
       fullText += text;
       if (onChunk) onChunk(text);
+    } else if (event.type === 'message_start' && event.message?.usage) {
+      usage.input = event.message.usage.input_tokens || 0;
+    } else if (event.type === 'message_delta' && event.usage) {
+      usage.output = event.usage.output_tokens || 0;
     }
   }
-  return fullText;
+  return { text: fullText, usage };
 }

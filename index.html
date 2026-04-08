@@ -10,6 +10,7 @@
   <header>
     <h1>简历定制助手</h1>
     <div class="header-actions">
+      <span id="sessionTotalInfo" style="font-size:0.85rem;color:#666;margin-right:12px;"></span>
       <label class="mock-toggle" title="仿真测试模式，不消耗API Token">
         <input type="checkbox" id="mockMode"> 仿真模式
       </label>
@@ -97,10 +98,30 @@
                 <tr data-conn="google-studio-google">
                   <td>Google</td>
                   <td><input type="password" data-field="key" placeholder="AIza..."></td>
-                  <td><input type="text" data-field="model" value="gemini-2.5-flash" placeholder="gemini-2.5-flash"></td>
+                  <td>
+                    <div class="input-with-btn">
+                      <input type="text" data-field="model" value="gemini-2.5-flash" placeholder="gemini-2.5-flash">
+                      <button id="geminiQueryModelsBtn" class="btn-secondary btn-sm" type="button">查询可用模型</button>
+                    </div>
+                  </td>
                 </tr>
               </tbody>
             </table>
+            <!-- Gemini Models List -->
+            <div id="geminiModelList" style="display:none; margin-top:12px;padding:8px;border:1px solid #ddd;border-radius:4px;max-height:300px;overflow-y:auto;">
+              <table class="model-list-table" style="width:100%;font-size:0.85rem;border-collapse:collapse;">
+                <thead style="position:sticky;top:0;background:#f5f5f5;">
+                  <tr>
+                    <th style="padding:4px;text-align:left;border-bottom:1px solid #ccc;">推荐</th>
+                    <th style="padding:4px;text-align:left;border-bottom:1px solid #ccc;">模型 ID</th>
+                    <th style="padding:4px;text-align:left;border-bottom:1px solid #ccc;">RPM / RPD / TPM</th>
+                    <th style="padding:4px;text-align:left;border-bottom:1px solid #ccc;">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="geminiModelListBody">
+                </tbody>
+              </table>
+            </div>
           </details>
         </fieldset>
 
@@ -250,7 +271,10 @@
           </div>
           <textarea id="resumeOutput" rows="25" class="output-area" placeholder="生成的简历将显示在这里..."></textarea>
           <div id="sameCompanyHint" class="same-company-hint" style="display:none"></div>
-          <div id="resumeStatus" class="status-bar"></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div id="resumeStatus" class="status-bar" style="flex:1;"></div>
+            <span id="resumeTokenInfo" style="font-size:0.8rem;color:#666;margin-left:8px;white-space:nowrap;"></span>
+          </div>
           <details id="genNotesSection" class="collapsible" style="display:none; margin-top: 8px;">
             <summary>AI 备注 / 需确认事项</summary>
             <textarea id="genNotesOutput" rows="8" class="output-area" readonly placeholder="AI的分析和需确认事项..."></textarea>
@@ -283,14 +307,22 @@
               <button id="chatSendBtn" class="btn-primary btn-sm">发送</button>
             </div>
           </div>
-          <div id="reviewStatus" class="status-bar"></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div id="reviewStatus" class="status-bar" style="flex:1;"></div>
+            <span id="reviewTokenInfo" style="font-size:0.8rem;color:#666;margin-left:8px;white-space:nowrap;"></span>
+          </div>
         </div>
       </div>
 
       <!-- HTML Download -->
       <div class="action-bar html-bar">
-        <button id="generateHtmlBtn" class="btn-primary" disabled>生成 HTML 并下载</button>
-        <span id="htmlStatus" class="status-text"></span>
+        <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
+          <button id="generateHtmlBtn" class="btn-primary" disabled>生成 HTML 并下载</button>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span id="htmlTokenInfo" style="font-size:0.8rem;color:#666;white-space:nowrap;"></span>
+            <span id="htmlStatus" class="status-text"></span>
+          </div>
+        </div>
       </div>
       <div class="chat-section html-chat-section" id="htmlChatSection" style="display:none">
         <h4>和 HTML 助手对话（调试排版问题）</h4>

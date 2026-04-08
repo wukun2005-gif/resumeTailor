@@ -72,6 +72,7 @@ export async function callOpenAICompat(connectionId, prompt, onChunk, opts = {})
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let usage = { input: 0, output: 0 };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -96,13 +97,18 @@ export async function callOpenAICompat(connectionId, prompt, onChunk, opts = {})
           fullText += text;
           if (onChunk) onChunk(text);
         }
+        // Capture usage from the chunk (may appear in final chunks)
+        if (parsed.usage) {
+          usage.input = parsed.usage.prompt_tokens || usage.input;
+          usage.output = parsed.usage.completion_tokens || usage.output;
+        }
       } catch {
         // skip malformed JSON chunks
       }
     }
   }
 
-  return fullText;
+  return { text: fullText, usage };
 }
 
 /** Convert our internal message format to OpenAI format */
