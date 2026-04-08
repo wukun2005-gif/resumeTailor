@@ -30,7 +30,7 @@
         <fieldset>
           <legend>模型连接配置（凭证加密存储在本地浏览器中）</legend>
 
-          <details class="collapsible provider-section" open>
+          <details class="collapsible provider-section">
             <summary>Jiekou.ai（付费代理 — OpenAI / Google / Anthropic）</summary>
             <table class="model-config-table">
               <thead>
@@ -88,7 +88,7 @@
             </table>
           </details>
 
-          <details class="collapsible provider-section">
+          <details class="collapsible provider-section" open>
             <summary>Google AI Studio（免费直连 — 需 VPN）</summary>
             <table class="model-config-table">
               <thead>
@@ -102,6 +102,7 @@
                     <div class="input-with-btn">
                       <input type="text" data-field="model" value="gemini-2.5-flash" placeholder="gemini-2.5-flash">
                       <button id="geminiQueryModelsBtn" class="btn-secondary btn-sm" type="button">查询可用模型</button>
+                      <span id="geminiModelStatus" class="status-text"></span>
                     </div>
                   </td>
                 </tr>

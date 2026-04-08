@@ -159,6 +159,7 @@ connectionId === 'jiekou-anthropic'      → Anthropic SDK (anthropic.js)
 | 方法 | 路径 | 说明 | 流式 |
 |---|---|---|---|
 | POST | `/init` | 初始化模型连接 | No |
+| POST | `/list-models` | 列出 Google AI Studio 可用于本应用的免费 Gemini 文本模型 | No |
 | GET | `/list-files` | 列出素材库文件 | No |
 | GET | `/read-file` | 读取单个文件 | No |
 | POST | `/save-file` | 保存文件 | No |
@@ -188,6 +189,17 @@ data: {"type":"chunk","text":"..."}
 data: {"type":"error","message":"..."}
 data: {"type":"done"}
 ```
+
+### `/list-models` 过滤策略
+
+`POST /api/list-models` 当前仅服务于 `google-studio-google`，并且是一个**面向本应用场景的精简列表**，不是 Google 全量模型浏览器。返回结果满足以下约束：
+
+- 仅返回适合简历/求职信生成场景的 **Gemini 文本模型**
+- 仅返回免费可用模型，不显示 `pro`、deep research、robotics、computer use 等付费或专用模型
+- 不显示图片/音频/TTS/embedding 等非文本模型
+- 不显示 `latest`、`-001` 这类别名噪音，尽量保留用户真正需要手选的模型 ID
+
+当前真实接口回归下，典型返回为 `gemini-2.5-flash`、`gemini-2.5-flash-lite`、`gemini-2.0-flash`、`gemini-2.0-flash-lite`、`gemini-3-flash-preview`、`gemini-3.1-flash-lite-preview`。
 
 ### 路径安全
 服务端维护 `allowedDirs` 白名单，所有文件操作路径必须在白名单目录下。
@@ -417,7 +429,7 @@ Mock 数据包含：
 
 - `.pages` 文件不支持自动解析，提示用户手动粘贴
 - Google AI Studio 需要 VPN（中国大陆网络限制）
-- `gemini-2.5-pro`/`gemini-3.1-pro-preview` 免费额度为 0，默认使用 `gemini-3.1-flash-lite-preview`（30 RPM, 2000 RPD）
+- Gemini 不同模型的免费配额差异较大；模型列表只显示“免费且适合文本生成”的 Gemini 模型，默认优先使用 `gemini-2.5-flash`
 - OpenAI-compat 的 PDF 多模态支持有限（转为文本占位符）
 - 加密基于浏览器指纹，更换浏览器会丢失已保存凭证
 - 应用数据存在 localStorage，清除浏览器数据会丢失所有配置
@@ -426,6 +438,26 @@ Mock 数据包含：
 
 ## 14. 开发指南
 
+### 回归测试要求
+
+凡是修改源代码后，都要至少完成以下回归：
+
+```bash
+npm run build
+PORT=3003 node --max-old-space-size=512 server/index.js
+set -a && source .env && set +a && TEST_BASE=http://localhost:3003/api node test-e2e.mjs
+```
+
+说明：
+
+- `.env` 中需要提供真实 `GEMINI_KEY`
+- 建议使用独立端口启动一份新后端，避免把测试打到旧进程
+- 主 E2E 默认使用 `gemini-3.1-flash-lite-preview` 以降低免费额度回归时的 429 风险；如需切换，可通过 `GEMINI_MODEL_ID` 覆盖
+- 以后只保留一个主 E2E 脚本：所有新增功能的端到端回归都必须并入 `test-e2e.mjs`，不要再新建第二个独立 E2E 脚本
+- `test-e2e.mjs` 当前覆盖主流程、`/list-models`、`/review-multi`、PII 脱敏/恢复链路，以及真实 Gemini 接口的重试路径
+- `test-e2e.mjs` 已支持对 429/503/高负载/瞬时网络错误做有限重试，并且 fatal 会正确计为失败
+- `npm run dev` 使用 Vite 热更新；只要工作区内的前端源码被修改，浏览器就可能整页 reload。当前版本已为 JD、手动简历、生成结果、Review 结果和 AI 备注做本地草稿恢复，但正在进行中的流式请求仍会被中断
+
 ### 添加新的模型供应商
 1. 如果是 OpenAI 兼容 API：无需改后端，只需在 `index.html` 添加表格行 + `main.js` 的 `MODEL_CONNECTIONS` 添加条目
 2. 如果是非兼容 API：在 `server/services/` 添加新 caller + `api.js` 中 `getSdkType()` 添加路由
@@ -433,7 +465,7 @@ Mock 数据包含：
 ### 添加新的 Agent 角色
 1. `index.html` 设置弹窗添加下拉/复选框
 2. `main.js` 的 `populateAgentDropdowns()` 中注册新选择器
-3. `main.js` 中对应功能函数读取 `state.get('newAgentModel')`
+3. `main.js` 中对应功能函数通过“已配置连接解析”辅助函数读取模型，避免把空字符串 connection id 直接发到后端
 4. `saveSettings()` 和 `restoreAgentAssignments()` 中处理新角色
 
 ### 修改 Prompt 模板
@@ -462,6 +494,81 @@ Mock 数据包含：
 ---
 
 ## Change Log
+
+### 2026-04-08 — Dev Reload 草稿恢复
+
+**概述**：修复开发模式下前端源码热更新触发整页 reload 后，JD、生成结果和 Review 结果全部丢失的问题。根因不是服务端崩溃，而是 `npm run dev` 下 Vite 监听到 `src/main.js` 变更后主动刷新页面；原先应用没有保存工作中的草稿。
+
+**实现要点**：
+
+- `src/main.js` 增加本地 `draftState`，自动保存 JD、手动简历、是否生成求职信、简历输出、Review 输出、AI 备注和状态文本
+- 在用户输入、流式 chunk 更新、保存完成，以及 `beforeunload` / `visibilitychange` 时落盘草稿
+- 页面初始化时自动恢复草稿；若检测到之前已有工作内容，会显示“已恢复本地草稿（页面曾刷新）”
+- 这只能恢复已经落盘的内容；若页面在流式请求中途 reload，请求本身仍会被浏览器中断，需要手动重新发起
+
+**真实回归结果**：
+
+- `npm run build`：通过
+- `TEST_BASE=http://localhost:3003/api node test-e2e.mjs`：40/40 通过
+
+**改动文件**：
+
+- `src/main.js` — 工作草稿自动保存与恢复
+- `DESIGN.md` — dev reload 说明与 changelog 更新
+
+### 2026-04-08 — 单主 E2E 合并 + 空连接兜底修复 + 模型查询状态优化
+
+**概述**：将原先分离的主流程 E2E 与 PII E2E 合并为单一主套件，后续所有新功能的端到端回归都必须并入 `test-e2e.mjs`。同时修复空 connection id 导致的生成失败，补上 `/extract-jd-info` 的本地兜底解析，并把“查询模型”的前端交互状态改成最简洁的朴素提示。
+
+**实现要点**：
+
+- `test-e2e.mjs` 合并普通流程、`/review-multi`、PII 脱敏/恢复链路到一个主脚本；删除 `test-pii-e2e.mjs`
+- 回归规范更新为“每次源码修改只跑一次主 E2E”，并明确新功能测试必须追加到 `test-e2e.mjs`
+- `src/main.js` 为模型查询增加 `查询中...` / `查询完毕` / `查询失败` 状态；默认展开免费 Google AI Studio，默认收起 `jiekou.ai`
+- `src/main.js` 改为基于“已配置连接解析”读取 Agent 模型，避免把空字符串模型 id 发给后端；未配置对应模型时会禁用相关按钮
+- `server/routes/api.js` 在仅存在一个已初始化连接时自动回退到该连接；`/extract-jd-info` 增加本地规则兜底，避免 AI JSON 偶发失败直接变成空结果
+- `server/services/gemini.js` 不再单纯按 `pro` 名称排除模型，而是按“免费且适合文本生成的 Gemini 模型”过滤；保留对 image/audio/video/computer-use 等非本应用场景模型的过滤
+
+**真实回归结果**：
+
+- `npm run build`：通过
+- `TEST_BASE=http://localhost:3003/api node test-e2e.mjs`：40/40 通过
+- 测试使用 `.env` 中真实免费 `GEMINI_KEY`，主 E2E 默认模型为 `gemini-3.1-flash-lite-preview`
+
+**改动文件**：
+
+- `index.html` — 默认展开/收起顺序调整；模型查询状态占位
+- `src/style.css` — 模型查询状态文本布局
+- `src/main.js` — 模型查询状态；Agent 连接解析；空连接防御；按钮可用性修正
+- `server/routes/api.js` — connection id 归一化与单连接回退；`/extract-jd-info` 本地兜底
+- `server/services/gemini.js` — Gemini 免费文本模型过滤规则放宽到不限于 flash/lite
+- `test-e2e.mjs` — 合并主流程 + `review-multi` + PII 主回归
+- `DESIGN.md` — 单主 E2E 规则与 changelog 更新
+
+### 2026-04-08 — Gemini 免费文本模型过滤 + 内部退避重试 + 真实回归补强
+
+**概述**：收紧 Google AI Studio 的模型发现逻辑，只显示适合本应用场景的免费 Gemini 文本模型；同时在 `callGemini()` 内部加入 429/503 的指数退避重试，降低真实接口回归时的瞬时高负载失败率。补强两套真实 E2E 脚本，修复 fatal 假阳性，并将 `/list-models` 纳入回归覆盖。
+
+**实现要点**：
+
+- `listGeminiModels()` 改为基于实时 models API 做场景化过滤：仅保留免费 Gemini 文本模型
+- 过滤掉 `pro`、deep research、robotics、computer use、image/audio/TTS/embedding，以及 `latest` / `-001` 别名噪音
+- `callGemini()` 在真正拿到流式 response 前，对 429/503/高负载错误做指数退避重试；一旦开始流式返回就不再重试，避免重复 chunk
+- `test-e2e.mjs` 新增 `/list-models` 断言，并修复 fatal 不计失败的问题
+- `test-e2e.mjs` / `test-pii-e2e.mjs` 支持 `TEST_BASE`，可指向独立测试后端实例；并对 429/503/高负载/瞬时网络错误做有限重试
+
+**真实回归结果**：
+
+- `npm run build`：通过
+- `TEST_BASE=http://localhost:3003/api node test-e2e.mjs`：22/22 通过
+- `TEST_BASE=http://localhost:3003/api node test-pii-e2e.mjs`：15/15 通过
+
+**改动文件**：
+
+- `server/services/gemini.js` — 免费 Gemini 文本模型过滤；429/503 指数退避重试
+- `src/main.js` — 模型列表空态提示；避免重复绑定选择事件
+- `test-e2e.mjs` — `/list-models` 真实接口断言；fatal 失败计数；`TEST_BASE`；重试增强
+- `test-pii-e2e.mjs` — fatal 失败计数；`TEST_BASE`；重试增强
 
 ### 2026-04-08 — PII 脱敏保护（V1.x）
 

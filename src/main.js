@@ -93,6 +93,7 @@ let htmlChatMessages = []; // HTML chat context
 let lastHtmlContent = ''; // Last generated HTML for chat context
 let uploadedFileData = null; // { mimeType, data } for PDF/image upload
 let baseResumeCache = new Map(); // key=filename, value={content, modified}
+let draftPersistTimer = null;
 
 /* ── Session Token & Cost Tracking ── */
 let sessionUsage = { totalInput: 0, totalOutput: 0, totalCost: 0 };
@@ -102,6 +103,80 @@ const PRICING = {
   'jiekou-openai': { input: 2.5 / 1000000, output: 10 / 1000000, note: 'OpenAI' },
   'jiekou-google': { input: 0.075 / 1000000, output: 0.3 / 1000000, note: 'Google' },
 };
+
+function buildDraftState() {
+  return {
+    jdInput: els.jdInput.value,
+    manualResumeInput: els.manualResumeInput.value,
+    generateCoverLetter: els.generateCoverLetter.checked,
+    resumeOutput: els.resumeOutput.value,
+    reviewOutput: els.reviewOutput.value,
+    genNotesOutput: els.genNotesOutput.value,
+    genNotesVisible: els.genNotesSection.style.display !== 'none' && !!els.genNotesOutput.value.trim(),
+    genNotesOpen: !!els.genNotesSection.open,
+    resumeStatus: els.resumeStatus.textContent,
+    reviewStatus: els.reviewStatus.textContent,
+    htmlStatus: els.htmlStatus.textContent,
+    savedAt: Date.now(),
+  };
+}
+
+function persistDraftState(immediate = false) {
+  const write = () => {
+    draftPersistTimer = null;
+    state.set('draftState', buildDraftState());
+  };
+
+  if (immediate) {
+    if (draftPersistTimer) clearTimeout(draftPersistTimer);
+    write();
+    return;
+  }
+
+  if (draftPersistTimer) clearTimeout(draftPersistTimer);
+  draftPersistTimer = setTimeout(write, 150);
+}
+
+function restoreDraftState() {
+  const draft = state.get('draftState', null);
+  if (!draft || typeof draft !== 'object') return;
+
+  if (typeof draft.jdInput === 'string') els.jdInput.value = draft.jdInput;
+  if (typeof draft.manualResumeInput === 'string') els.manualResumeInput.value = draft.manualResumeInput;
+  if (typeof draft.generateCoverLetter === 'boolean') els.generateCoverLetter.checked = draft.generateCoverLetter;
+  if (typeof draft.resumeOutput === 'string') els.resumeOutput.value = draft.resumeOutput;
+  if (typeof draft.reviewOutput === 'string') els.reviewOutput.value = draft.reviewOutput;
+  if (typeof draft.genNotesOutput === 'string') els.genNotesOutput.value = draft.genNotesOutput;
+  if (draft.genNotesVisible) {
+    els.genNotesSection.style.display = '';
+    els.genNotesSection.open = !!draft.genNotesOpen;
+  }
+
+  const hadRestoredWork = !!(
+    (draft.jdInput || '').trim()
+    || (draft.manualResumeInput || '').trim()
+    || (draft.resumeOutput || '').trim()
+    || (draft.reviewOutput || '').trim()
+    || (draft.genNotesOutput || '').trim()
+  );
+
+  if (hadRestoredWork) {
+    if ((draft.resumeOutput || '').trim()) {
+      els.resumeStatus.textContent = '已恢复本地草稿（页面曾刷新）';
+    }
+    if ((draft.reviewOutput || '').trim()) {
+      els.reviewStatus.textContent = '已恢复本地草稿（页面曾刷新）';
+    }
+    if (!(draft.resumeOutput || '').trim() && !(draft.reviewOutput || '').trim()) {
+      els.resumeStatus.textContent = '已恢复本地草稿（页面曾刷新）';
+    }
+  } else {
+    if (typeof draft.resumeStatus === 'string') els.resumeStatus.textContent = draft.resumeStatus;
+    if (typeof draft.reviewStatus === 'string') els.reviewStatus.textContent = draft.reviewStatus;
+  }
+
+  if (typeof draft.htmlStatus === 'string') els.htmlStatus.textContent = draft.htmlStatus;
+}
 
 /* ── Model Connection Definitions ── */
 const MODEL_CONNECTIONS = [
@@ -129,29 +204,118 @@ function getConfiguredConnections() {
   });
 }
 
+function getSelectedReviewers() {
+  return [...els.cfgAgentReviewers.querySelectorAll('input:checked')].map(cb => cb.value);
+}
+
+function migrateConnectionId(id) {
+  if (id === 'opus') return 'jiekou-anthropic';
+  if (id === 'gemini') return 'google-studio-google';
+  return id || '';
+}
+
+function getConfiguredConnectionIds() {
+  return getConfiguredConnections().map(def => def.id);
+}
+
+function resolveSingleConnectionId(currentValue, savedValue, defaultValue) {
+  const configuredIds = getConfiguredConnectionIds();
+  if (!configuredIds.length) return '';
+
+  for (const candidate of [currentValue, savedValue, defaultValue]) {
+    const id = migrateConnectionId(candidate);
+    if (id && configuredIds.includes(id)) return id;
+  }
+  return configuredIds[0];
+}
+
+function resolveReviewerConnectionIds(currentValues = [], savedValues = [], defaultValue = 'google-studio-google') {
+  const configuredIds = getConfiguredConnectionIds();
+  if (!configuredIds.length) return [];
+
+  const selected = [];
+  for (const candidate of [...currentValues, ...(Array.isArray(savedValues) ? savedValues : []), defaultValue]) {
+    const id = migrateConnectionId(candidate);
+    if (id && configuredIds.includes(id) && !selected.includes(id)) selected.push(id);
+  }
+  return selected.length ? selected : [configuredIds[0]];
+}
+
+function applyResolvedAgentSelections(overrides = {}) {
+  const orchestratorModel = resolveSingleConnectionId(
+    overrides.orchestratorValue ?? els.cfgAgentOrchestrator.value,
+    state.get('orchestratorModel', 'jiekou-anthropic'),
+    'jiekou-anthropic',
+  );
+  const generatorModel = resolveSingleConnectionId(
+    overrides.generatorValue ?? els.cfgAgentGenerator.value,
+    state.get('generatorModel', 'jiekou-anthropic'),
+    'jiekou-anthropic',
+  );
+  const htmlModel = resolveSingleConnectionId(
+    overrides.htmlValue ?? els.cfgAgentHtml.value,
+    state.get('htmlModel', 'google-studio-google'),
+    'google-studio-google',
+  );
+  const reviewerModels = resolveReviewerConnectionIds(
+    overrides.reviewerValues ?? getSelectedReviewers(),
+    state.get('reviewerModels', ['google-studio-google']),
+    'google-studio-google',
+  );
+
+  els.cfgAgentOrchestrator.value = orchestratorModel;
+  els.cfgAgentGenerator.value = generatorModel;
+  els.cfgAgentHtml.value = htmlModel;
+  for (const cb of els.cfgAgentReviewers.querySelectorAll('input[type="checkbox"]')) {
+    cb.checked = reviewerModels.includes(cb.value);
+  }
+
+  return { orchestratorModel, generatorModel, htmlModel, reviewerModels };
+}
+
 function populateAgentDropdowns() {
   const configured = getConfiguredConnections();
+  const prevSelections = {
+    orchestratorValue: els.cfgAgentOrchestrator.value,
+    generatorValue: els.cfgAgentGenerator.value,
+    htmlValue: els.cfgAgentHtml.value,
+    reviewerValues: getSelectedReviewers(),
+  };
   const options = configured.map(c =>
     `<option value="${c.id}">${c.label} (${getConnInput(c.id, 'model')?.value || c.defaultModel || c.family})</option>`
   ).join('');
   const emptyOption = '<option value="">— 未配置 —</option>';
 
-  // Dropdowns (orchestrator, generator, html)
   for (const sel of [els.cfgAgentOrchestrator, els.cfgAgentGenerator, els.cfgAgentHtml]) {
-    const prev = sel.value;
     sel.innerHTML = emptyOption + options;
-    if (prev && configured.some(c => c.id === prev)) sel.value = prev;
   }
 
-  // Reviewer checkboxes (multi-select)
-  const prevReviewers = getSelectedReviewers();
   els.cfgAgentReviewers.innerHTML = configured.map(c =>
-    `<label class="checkbox-label"><input type="checkbox" value="${c.id}" ${prevReviewers.includes(c.id) ? 'checked' : ''}> ${c.label}</label>`
+    `<label class="checkbox-label"><input type="checkbox" value="${c.id}"> ${c.label}</label>`
   ).join('');
+
+  return applyResolvedAgentSelections(prevSelections);
 }
 
-function getSelectedReviewers() {
-  return [...els.cfgAgentReviewers.querySelectorAll('input:checked')].map(cb => cb.value);
+function getOrchestratorModelId() {
+  return resolveSingleConnectionId(els.cfgAgentOrchestrator.value, state.get('orchestratorModel', 'jiekou-anthropic'), 'jiekou-anthropic');
+}
+
+function getGeneratorModelId() {
+  return resolveSingleConnectionId(els.cfgAgentGenerator.value, state.get('generatorModel', 'jiekou-anthropic'), 'jiekou-anthropic');
+}
+
+function getHtmlModelId() {
+  return resolveSingleConnectionId(els.cfgAgentHtml.value, state.get('htmlModel', 'google-studio-google'), 'google-studio-google');
+}
+
+function getReviewerModelIds() {
+  return resolveReviewerConnectionIds(getSelectedReviewers(), state.get('reviewerModels', ['google-studio-google']), 'google-studio-google');
+}
+
+function requireConfiguredConnection(connectionId, roleLabel) {
+  if (connectionId || els.mockMode.checked) return connectionId;
+  throw new Error(`${roleLabel} 模型连接未配置，请先在“设置”中填写 API Key 并保存`);
 }
 
 /* ── Token & Cost Utilities ── */
@@ -182,37 +346,61 @@ function updateSessionTotal() {
 
 /* ── Gemini Model Discovery ── */
 async function fetchGeminiModels() {
+  const statusEl = document.getElementById('geminiModelStatus');
+  const queryBtn = document.getElementById('geminiQueryModelsBtn');
+  if (statusEl) {
+    statusEl.textContent = '查询中...';
+    statusEl.className = 'status-text';
+  }
+  if (queryBtn) queryBtn.disabled = true;
   try {
     const response = await api.listModels('google-studio-google');
     const { models } = response;
 
     const tbody = document.getElementById('geminiModelListBody');
-    tbody.innerHTML = models.map(m => {
-      const rpmStr = `${m.rateLimits.rpm}/${m.rateLimits.rpm}`;
-      const rpdStr = `${m.rateLimits.rpd}/${m.rateLimits.rpd}`;
-      const tpmStr = m.rateLimits.tpm > 0 ? (m.rateLimits.tpm / 1000000).toFixed(1) + 'M' : '-';
-      return `
-        <tr style="border-bottom:1px solid #eee;">
-          <td style="padding:4px;">${m.recommendation}</td>
-          <td style="padding:4px;"><code style="font-size:0.8rem;">${m.id}</code></td>
-          <td style="padding:4px;font-size:0.75rem;">RPM ${rpmStr} / RPD ${rpdStr} / TPM ${tpmStr}</td>
-          <td style="padding:4px;">
-            <button class="btn-secondary btn-sm" data-select-model="${m.id}" style="padding:2px 8px;font-size:0.75rem;">选择</button>
-          </td>
+    if (!models.length) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="4" style="padding:8px;color:#666;">未找到适合简历/求职信文本生成的模型</td>
         </tr>
       `;
-    }).join('');
+    } else {
+      tbody.innerHTML = models.map(m => {
+        const rpmStr = `${m.rateLimits.rpm}/${m.rateLimits.rpm}`;
+        const rpdStr = `${m.rateLimits.rpd}/${m.rateLimits.rpd}`;
+        const tpmStr = m.rateLimits.tpm > 0 ? (m.rateLimits.tpm / 1000000).toFixed(1) + 'M' : '-';
+        return `
+          <tr style="border-bottom:1px solid #eee;">
+            <td style="padding:4px;">${m.recommendation}</td>
+            <td style="padding:4px;"><code style="font-size:0.8rem;">${m.id}</code></td>
+            <td style="padding:4px;font-size:0.75rem;">RPM ${rpmStr} / RPD ${rpdStr} / TPM ${tpmStr}</td>
+            <td style="padding:4px;">
+              <button class="btn-secondary btn-sm" data-select-model="${m.id}" style="padding:2px 8px;font-size:0.75rem;">选择</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
 
-    // Use event delegation for select buttons (module scope can't use inline onclick)
-    tbody.addEventListener('click', (e) => {
+    tbody.onclick = (e) => {
       const btn = e.target.closest('[data-select-model]');
       if (btn) selectGeminiModel(btn.dataset.selectModel);
-    });
+    };
 
     const modelList = document.getElementById('geminiModelList');
     modelList.style.display = '';
+    if (statusEl) {
+      statusEl.textContent = '查询完毕';
+      statusEl.className = 'status-text success';
+    }
   } catch (e) {
+    if (statusEl) {
+      statusEl.textContent = '查询失败';
+      statusEl.className = 'status-text error';
+    }
     alert('获取模型列表失败: ' + e.message);
+  } finally {
+    if (queryBtn) queryBtn.disabled = false;
   }
 }
 
@@ -333,35 +521,19 @@ async function restoreState() {
   els.cfgPiiGithub.value = await state.getCredential('pii_github');
   els.cfgPiiWebsite.value = await state.getCredential('pii_website');
   els.cfgPiiOther.value = await state.getCredential('pii_other');
+
+  restoreDraftState();
 }
 
 function restoreAgentAssignments() {
-  // Migrate old model IDs to new connection IDs
-  const migrateId = id => {
-    if (id === 'opus') return 'jiekou-anthropic';
-    if (id === 'gemini') return 'google-studio-google';
-    return id;
-  };
-
-  const orch = migrateId(state.get('orchestratorModel', 'jiekou-anthropic'));
-  const gen = migrateId(state.get('generatorModel', 'jiekou-anthropic'));
-  const html = migrateId(state.get('htmlModel', 'google-studio-google'));
-  const reviewers = (state.get('reviewerModels', ['google-studio-google']) || []).map(migrateId);
-
-  els.cfgAgentOrchestrator.value = orch;
-  els.cfgAgentGenerator.value = gen;
-  els.cfgAgentHtml.value = html;
-
-  // Restore reviewer checkboxes
-  for (const cb of els.cfgAgentReviewers.querySelectorAll('input[type="checkbox"]')) {
-    cb.checked = reviewers.includes(cb.value);
-  }
+  applyResolvedAgentSelections();
 }
 
 function persistInputs() {
   state.set('libraryPath', els.libraryPath.value);
   state.set('genInstructions', els.genInstructions.value);
   state.set('htmlInstructions', els.htmlInstructions.value);
+  persistDraftState();
 }
 
 /* ── Events ── */
@@ -388,7 +560,7 @@ function bindEvents() {
   els.htmlChatSendBtn.addEventListener('click', doHtmlChat);
   els.htmlChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doHtmlChat(); } });
   els.htmlPdfUpload.addEventListener('change', handlePdfUpload);
-  els.mockMode.addEventListener('change', () => state.set('mockMode', els.mockMode.checked));
+  els.mockMode.addEventListener('change', () => { state.set('mockMode', els.mockMode.checked); updateGenerateBtn(); });
   const geminiQueryBtn = document.getElementById('geminiQueryModelsBtn');
   if (geminiQueryBtn) geminiQueryBtn.addEventListener('click', fetchGeminiModels);
   // Update agent dropdowns when connection keys change
@@ -398,10 +570,17 @@ function bindEvents() {
     const modelInput = getConnInput(def.id, 'model');
     if (modelInput) modelInput.addEventListener('input', populateAgentDropdowns);
   }
-  els.jdInput.addEventListener('input', () => { jdInfo = null; updateGenerateBtn(); });
-  els.resumeOutput.addEventListener('input', onResumeEdited);
+  els.jdInput.addEventListener('input', () => { jdInfo = null; updateGenerateBtn(); persistDraftState(); });
+  els.manualResumeInput.addEventListener('input', persistDraftState);
+  els.generateCoverLetter.addEventListener('change', persistDraftState);
+  els.resumeOutput.addEventListener('input', () => { onResumeEdited(); persistDraftState(); });
+  els.reviewOutput.addEventListener('input', persistDraftState);
   els.genInstructions.addEventListener('change', persistInputs);
   els.htmlInstructions.addEventListener('change', persistInputs);
+  window.addEventListener('beforeunload', () => persistDraftState(true));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') persistDraftState(true);
+  });
   // Auto-resize chat textareas
   for (const ta of [els.genChatInput, els.chatInput, els.htmlChatInput]) {
     if (ta) ta.addEventListener('input', () => autoResize(ta));
@@ -419,9 +598,12 @@ function onResumeEdited() {
 
 function updateGenerateBtn() {
   const hasJD = els.jdInput.value.trim().length > 0;
-  els.generateBtn.disabled = !hasJD || isStreaming;
-  els.generateHtmlBtn.disabled = !els.resumeOutput.value.trim() || isStreaming;
-  els.reviewBtn.disabled = !els.resumeOutput.value.trim() || isStreaming;
+  const hasGenerator = !!getGeneratorModelId();
+  const hasHtml = !!getHtmlModelId();
+  const hasReviewer = getReviewerModelIds().length > 0;
+  els.generateBtn.disabled = !hasJD || isStreaming || (!els.mockMode.checked && !hasGenerator);
+  els.generateHtmlBtn.disabled = !els.resumeOutput.value.trim() || isStreaming || (!els.mockMode.checked && !hasHtml);
+  els.reviewBtn.disabled = !els.resumeOutput.value.trim() || isStreaming || (!els.mockMode.checked && !hasReviewer);
 }
 
 /* ── Browse folder (Chrome File System Access API) ── */
@@ -457,15 +639,11 @@ async function saveSettings() {
     if (modelInput) state.set(`connModel_${def.id}`, modelInput.value.trim());
   }
 
-  // Save agent assignments
-  state.set('orchestratorModel', els.cfgAgentOrchestrator.value);
-  state.set('generatorModel', els.cfgAgentGenerator.value);
-  const reviewerModels = getSelectedReviewers();
-  if (reviewerModels.length === 0 && getConfiguredConnections().length > 0) {
-    reviewerModels.push(getConfiguredConnections()[0].id);
-  }
-  state.set('reviewerModels', reviewerModels);
-  state.set('htmlModel', els.cfgAgentHtml.value);
+  const assignments = populateAgentDropdowns();
+  state.set('orchestratorModel', assignments.orchestratorModel);
+  state.set('generatorModel', assignments.generatorModel);
+  state.set('reviewerModels', assignments.reviewerModels);
+  state.set('htmlModel', assignments.htmlModel);
 
   // Save PII config (encrypted)
   state.set('piiEnabled', els.cfgPiiEnabled.checked);
@@ -478,10 +656,6 @@ async function saveSettings() {
   await state.setCredential('pii_github', els.cfgPiiGithub.value.trim());
   await state.setCredential('pii_website', els.cfgPiiWebsite.value.trim());
   await state.setCredential('pii_other', els.cfgPiiOther.value.trim());
-
-  // Update agent dropdowns with latest connections
-  populateAgentDropdowns();
-  restoreAgentAssignments();
 
   els.settingsStatus.textContent = '连接中...';
   els.settingsStatus.className = 'status-text';
@@ -664,7 +838,8 @@ async function extractJdInfo() {
   }
 
   try {
-    const model = state.get('orchestratorModel', 'jiekou-anthropic');
+    const model = getOrchestratorModelId();
+    if (!model && !els.mockMode.checked) return { company: '', department: '', title: '', language: 'en' };
     const res = await fetch('/api/extract-jd-info', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -796,10 +971,11 @@ async function doGenerate() {
   els.genNotesOutput.value = '';
   els.genChatHistory.innerHTML = '';
   genChatMessages = [];
+  persistDraftState(true);
 
   let rawOutput = '';
   try {
-    const model = state.get('generatorModel', 'jiekou-anthropic');
+    const model = requireConfiguredConnection(getGeneratorModelId(), 'Generator');
     const mock = els.mockMode.checked;
     let library = [];
     let previouslySubmitted = '';
@@ -815,6 +991,7 @@ async function doGenerate() {
       const dir = els.libraryPath.value.trim();
       if (dir) {
         els.resumeStatus.textContent = '正在预处理素材库...';
+        persistDraftState();
         const { digest } = await api.getLibraryDigest(dir, excludeNames);
         library = digest;
       }
@@ -832,6 +1009,7 @@ async function doGenerate() {
       // During streaming, show full raw output
       els.resumeOutput.value = full;
       els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;
+      persistDraftState();
     });
 
     // After streaming done, parse and separate
@@ -844,6 +1022,7 @@ async function doGenerate() {
       els.genNotesSection.style.display = '';
       els.genNotesSection.open = true;
     }
+    persistDraftState(true);
 
     // Init generator chat context after generation
     genChatMessages = [
@@ -865,12 +1044,14 @@ async function doGenerate() {
     els.resumeStatus.className = 'status-bar';
     els.saveResumeBtn.disabled = false;
     els.generateHtmlBtn.disabled = false;
+    persistDraftState(true);
 
     // Auto-save to library (save only resume body, not notes)
     await autoSaveToLibrary();
   } catch (e) {
     els.resumeStatus.textContent = '生成失败: ' + e.message;
     els.resumeStatus.className = 'status-bar';
+    persistDraftState(true);
   }
   isStreaming = false;
   updateGenerateBtn();
@@ -886,11 +1067,13 @@ async function autoSaveToLibrary() {
     await api.saveFile(dir + '/' + filename, els.resumeOutput.value);
     els.resumeStatus.textContent = `已自动保存: ${filename}`;
     els.resumeStatus.className = 'status-bar';
+    persistDraftState(true);
     // Append new file to library contents cache (incremental, no full reset)
     resumeLibraryContents.push({ name: filename, content: els.resumeOutput.value });
     loadLibrary(true);
   } catch (e) {
     els.resumeStatus.textContent = `生成完成（自动保存失败: ${e.message}）`;
+    persistDraftState(true);
   }
 }
 
@@ -920,6 +1103,7 @@ async function doSave() {
     els.saveFilenameRow.style.display = 'none';
     els.resumeStatus.textContent = `已保存到: ${filePath}`;
     els.resumeStatus.className = 'status-bar';
+    persistDraftState(true);
     // Append new file to library contents cache (incremental, no full reset)
     resumeLibraryContents.push({ name, content: els.resumeOutput.value });
     loadLibrary(true);
@@ -939,9 +1123,11 @@ async function doReview() {
   els.reviewOutput.value = '';
   els.reviewStatus.textContent = 'Review 中...';
   els.reviewStatus.className = 'status-bar loading';
+  persistDraftState(true);
 
   try {
-    const reviewerModels = state.get('reviewerModels', ['google-studio-google']);
+    const reviewerModels = getReviewerModelIds();
+    requireConfiguredConnection(reviewerModels[0], 'Reviewer');
     const mock = els.mockMode.checked;
     let library = [];
     let previouslySubmitted = '';
@@ -954,6 +1140,7 @@ async function doReview() {
       const dir = els.libraryPath.value.trim();
       if (dir) {
         els.reviewStatus.textContent = '正在预处理素材库...';
+        persistDraftState();
         const { digest } = await api.getLibraryDigest(dir, []);
         library = digest;
       }
@@ -974,10 +1161,11 @@ async function doReview() {
       result = await api.streamRequest('/api/review-multi', {
         ...reviewPayload,
         models: reviewerModels,
-        orchestratorModel: state.get('orchestratorModel', 'jiekou-anthropic'),
+        orchestratorModel: requireConfiguredConnection(getOrchestratorModelId(), 'Orchestrator'),
       }, (chunk, full) => {
         els.reviewOutput.value = full;
         els.reviewOutput.scrollTop = els.reviewOutput.scrollHeight;
+        persistDraftState();
       });
     } else {
       // Single reviewer
@@ -987,6 +1175,7 @@ async function doReview() {
       }, (chunk, full) => {
         els.reviewOutput.value = full;
         els.reviewOutput.scrollTop = els.reviewOutput.scrollHeight;
+        persistDraftState();
       });
     }
 
@@ -1008,9 +1197,11 @@ async function doReview() {
     els.reviewStatus.textContent = 'Review 完成';
     els.reviewStatus.className = 'status-bar';
     els.applyReviewBtn.disabled = false;
+    persistDraftState(true);
   } catch (e) {
     els.reviewStatus.textContent = 'Review 失败: ' + e.message;
     els.reviewStatus.className = 'status-bar';
+    persistDraftState(true);
   }
   isStreaming = false;
   els.reviewBtn.disabled = false;
@@ -1107,9 +1298,10 @@ async function doApplyReview() {
   els.resumeOutput.value = '';
   els.resumeStatus.textContent = '根据Review意见更新简历中（diff模式）...';
   els.resumeStatus.className = 'status-bar loading';
+  persistDraftState(true);
 
   try {
-    const model = state.get('generatorModel', 'jiekou-anthropic');
+    const model = requireConfiguredConnection(getGeneratorModelId(), 'Generator');
     const mock = els.mockMode.checked;
     let previouslySubmitted = '';
     if (!mock) {
@@ -1129,6 +1321,7 @@ async function doApplyReview() {
     }, (chunk, full) => {
       els.resumeOutput.value = full;
       els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;
+      persistDraftState();
     });
 
     // Display token usage
@@ -1147,6 +1340,7 @@ async function doApplyReview() {
       // Apply diffs to the original resume
       const { result, applied, failed } = applyDiffs(currentResume, diffs);
       els.resumeOutput.value = result;
+      persistDraftState(true);
 
       if (failed > 0) {
         els.resumeStatus.textContent = `已应用 ${applied}/${diffs.length} 处修改（${failed} 处无法匹配）`;
@@ -1156,11 +1350,13 @@ async function doApplyReview() {
       els.resumeStatus.className = 'status-bar';
       els.saveResumeBtn.disabled = false;
       els.generateHtmlBtn.disabled = false;
+      persistDraftState(true);
       await autoSaveToLibrary();
     } else {
       // Fallback: diff parsing failed, use full regeneration
       els.resumeStatus.textContent = 'Diff模式未生效，回退到全量重生成...';
       els.resumeOutput.value = '';
+      persistDraftState(true);
 
       let library = [];
       if (!mock) {
@@ -1184,6 +1380,7 @@ async function doApplyReview() {
       }, (chunk, full) => {
         els.resumeOutput.value = full;
         els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;
+        persistDraftState();
       });
 
       // Display token usage
@@ -1203,6 +1400,7 @@ async function doApplyReview() {
       els.resumeStatus.className = 'status-bar';
       els.saveResumeBtn.disabled = false;
       els.generateHtmlBtn.disabled = false;
+      persistDraftState(true);
       await autoSaveToLibrary();
     }
 
@@ -1215,6 +1413,7 @@ async function doApplyReview() {
   } catch (e) {
     els.resumeStatus.textContent = '更新失败: ' + e.message;
     els.resumeStatus.className = 'status-bar';
+    persistDraftState(true);
   }
   isStreaming = false;
   els.applyReviewBtn.disabled = false;
@@ -1236,7 +1435,7 @@ async function doGenChat() {
   aiDiv.classList.add('loading');
 
   try {
-    const model = state.get('generatorModel', 'jiekou-anthropic');
+    const model = requireConfiguredConnection(getGeneratorModelId(), 'Generator');
     const result = await api.streamRequest('/api/chat', {
       model, mock: els.mockMode.checked,
       messages: truncateHistory(genChatMessages),
@@ -1250,10 +1449,10 @@ async function doGenChat() {
 
     // Display token usage
     if (result.usage && els.resumeTokenInfo) {
-      els.resumeTokenInfo.textContent = formatUsage(result.usage, result.model || state.get('generatorModel', 'jiekou-anthropic'));
+      els.resumeTokenInfo.textContent = formatUsage(result.usage, result.model || model);
       sessionUsage.totalInput += (result.usage.input || 0);
       sessionUsage.totalOutput += (result.usage.output || 0);
-      const pricing = PRICING[result.model || state.get('generatorModel', 'jiekou-anthropic')] || { input: 0, output: 0 };
+      const pricing = PRICING[result.model || model] || { input: 0, output: 0 };
       sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
       updateSessionTotal();
     }
@@ -1264,9 +1463,11 @@ async function doGenChat() {
       els.resumeOutput.value = resumeBody;
       if (notes) els.genNotesOutput.value = notes;
       els.resumeStatus.textContent = '简历已根据对话更新';
+      persistDraftState(true);
     } else if (looksLikeResume(result.text || result)) {
       els.resumeOutput.value = result;
       els.resumeStatus.textContent = '简历已根据对话更新（请检查内容）';
+      persistDraftState(true);
     }
   } catch (e) {
     aiDiv.textContent = '错误: ' + e.message;
@@ -1299,7 +1500,7 @@ async function doChat() {
   aiDiv.classList.add('loading');
 
   try {
-    const model = state.get('orchestratorModel', 'jiekou-anthropic');
+    const model = requireConfiguredConnection(getOrchestratorModelId(), 'Orchestrator');
     const result = await api.streamRequest('/api/chat', {
       model, mock: els.mockMode.checked,
       messages: truncateHistory(chatMessages),
@@ -1313,10 +1514,10 @@ async function doChat() {
 
     // Display token usage
     if (result.usage && els.reviewTokenInfo) {
-      els.reviewTokenInfo.textContent = formatUsage(result.usage, result.model || state.get('orchestratorModel', 'jiekou-anthropic'));
+      els.reviewTokenInfo.textContent = formatUsage(result.usage, result.model || model);
       sessionUsage.totalInput += (result.usage.input || 0);
       sessionUsage.totalOutput += (result.usage.output || 0);
-      const pricing = PRICING[result.model || state.get('orchestratorModel', 'jiekou-anthropic')] || { input: 0, output: 0 };
+      const pricing = PRICING[result.model || model] || { input: 0, output: 0 };
       sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
       updateSessionTotal();
     }
@@ -1325,6 +1526,7 @@ async function doChat() {
     if (looksLikeReview(result.text || result)) {
       els.reviewOutput.value = result.text || result;
       els.reviewStatus.textContent = '评审已根据对话更新';
+      persistDraftState(true);
     }
   } catch (e) {
     aiDiv.textContent = '错误: ' + e.message;
@@ -1354,7 +1556,7 @@ async function doGenerateHtml() {
 
   let htmlContent = '';
   try {
-    const model = state.get('htmlModel', 'google-studio-google');
+    const model = requireConfiguredConnection(getHtmlModelId(), 'HTML Converter');
     let result = await api.streamRequest('/api/generate-html', {
       model, mock: els.mockMode.checked,
       resumeText: resume,
@@ -1471,7 +1673,7 @@ async function doHtmlChat() {
   aiDiv.classList.add('loading');
 
   try {
-    const model = state.get('htmlModel', 'google-studio-google');
+    const model = requireConfiguredConnection(getHtmlModelId(), 'HTML Converter');
     const result = await api.streamRequest('/api/chat', {
       model, mock: els.mockMode.checked,
       messages: truncateHistory(htmlChatMessages),

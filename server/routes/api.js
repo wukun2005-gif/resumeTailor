@@ -48,10 +48,28 @@ function getSdkType(connectionId) {
   return 'openai-compat';
 }
 
+function normalizeConnectionId(connectionId) {
+  let resolvedId = connectionId;
+  if (resolvedId === 'opus') resolvedId = 'jiekou-anthropic';
+  if (resolvedId === 'gemini') resolvedId = 'google-studio-google';
+
+  if (resolvedId && connectionRegistry.has(resolvedId)) {
+    return resolvedId;
+  }
+
+  if (connectionRegistry.size === 1) {
+    return [...connectionRegistry.keys()][0];
+  }
+
+  if (!resolvedId) {
+    throw new Error('模型连接未配置，请先在“设置”中填写 API Key 并保存');
+  }
+
+  throw new Error(`模型连接 "${resolvedId}" 未初始化，请先在“设置”中保存有效 API Key`);
+}
+
 function getModelCaller(connectionId) {
-  // Backward compat: map old names
-  if (connectionId === 'opus') connectionId = 'jiekou-anthropic';
-  if (connectionId === 'gemini') connectionId = 'google-studio-google';
+  connectionId = normalizeConnectionId(connectionId);
 
   const sdkType = getSdkType(connectionId);
 
@@ -83,6 +101,58 @@ const MOCK = {
   html: '<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:24px 40px;font-size:10.5pt;line-height:1.4;color:#222}h1{text-align:center;font-size:20pt}</style></head><body><h1>吴坤</h1><p>[仿真测试模式] HTML预览</p></body></html>',
   extractJdInfo: '{"company":"Amazon","department":"AGS","title":"Senior Product Manager","language":"en"}',
 };
+
+function detectJdLanguage(text) {
+  const chinese = (String(text).match(/[\u4e00-\u9fff]/g) || []).length;
+  const total = String(text).replace(/\s/g, '').length || 1;
+  return chinese / total > 0.15 ? 'zh' : 'en';
+}
+
+function tryLocalJdParse(jdText) {
+  const lang = detectJdLanguage(jdText);
+  let company = '';
+  let department = '';
+  let title = '';
+
+  const companyPatterns = [
+    /(?:Company|公司)[:\s：]+([^\n,，]+)/i,
+    /(?:About|关于)\s+([A-Z][\w&.\- ]+)/i,
+    /(?:^|\n)([A-Z][\w&.\- ]{2,})\s+(?:is |are |was )/m,
+  ];
+  for (const pattern of companyPatterns) {
+    const match = jdText.match(pattern);
+    if (match) {
+      company = match[1].trim();
+      break;
+    }
+  }
+
+  const titlePatterns = [
+    /(?:Position|Title|Role|Job Title|职位|岗位)[:\s：]+([^\n,，]+)/i,
+    /(?:^|\n)(?:Senior |Staff |Lead |Principal |Jr\.? |Junior )?(\w[\w\s/&]+(?:Manager|Engineer|Developer|Designer|Analyst|Architect|Scientist|Director|Coordinator|Specialist|Consultant|Administrator|Strategist|Producer|Writer|Editor))/im,
+  ];
+  for (const pattern of titlePatterns) {
+    const match = jdText.match(pattern);
+    if (match) {
+      title = match[1].trim();
+      break;
+    }
+  }
+
+  const deptPatterns = [
+    /(?:Department|Team|Division|Group|部门|团队)[:\s：]+([^\n,，]+)/i,
+  ];
+  for (const pattern of deptPatterns) {
+    const match = jdText.match(pattern);
+    if (match) {
+      department = match[1].trim();
+      break;
+    }
+  }
+
+  if (!company || !title) return null;
+  return { company, department, title, language: lang };
+}
 
 async function streamMock(res, text) {
   setupSSE(res);
@@ -399,6 +469,10 @@ router.post('/extract-jd-info', async (req, res) => {
       sanitizeRequestBody(req.body, ['jd'], piiEntries);
     }
     const { model, jd } = req.body;
+    const localInfo = tryLocalJdParse(jd);
+    if (localInfo) {
+      return res.json({ ...localInfo, usage: { input: 0, output: 0, local: true } });
+    }
     const caller = getModelCaller(model);
     const prompt = `你的任务是从招聘JD中精确提取关键信息。
 

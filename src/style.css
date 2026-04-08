@@ -36,6 +36,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
 .flex-1 { flex: 1; }
 .input-with-btn { display: flex; gap: 8px; }
 .input-with-btn input { flex: 1; }
+.input-with-btn .status-text { align-self: center; white-space: nowrap; }
 .required { color: #dc2626; }
 .checkbox-group { display: flex; gap: 16px; padding: 4px 0; }
 

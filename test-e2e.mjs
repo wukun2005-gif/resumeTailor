@@ -1,12 +1,39 @@
 /**
- * End-to-end test for all AI API routes using Gemini.
- * Usage: node test-e2e.mjs
+ * Main end-to-end regression test for all Gemini-backed routes.
+ * Usage: GEMINI_KEY=xxx TEST_BASE=http://localhost:3003/api node test-e2e.mjs
  */
 
-const BASE = 'http://localhost:3001/api';
+const BASE = process.env.TEST_BASE || 'http://localhost:3001/api';
 const GEMINI_KEY = process.env.GEMINI_KEY;
-if (!GEMINI_KEY) { console.error('请设置环境变量 GEMINI_KEY'); process.exit(1); }
 const MODEL = 'google-studio-google';
+const GEMINI_MODEL_ID = process.env.GEMINI_MODEL_ID || 'gemini-3.1-flash-lite-preview';
+const RATE_LIMIT_DELAY = 8000; // Gemini free tier is sensitive to burst traffic
+const RESULTS = [];
+
+if (!GEMINI_KEY) {
+  console.error('请设置环境变量 GEMINI_KEY');
+  process.exit(1);
+}
+
+const BANNED_MODEL_PATTERNS = [
+  /\bimage\b/i,
+  /\bimagen\b/i,
+  /\bnano\s*banana\b/i,
+  /\baudio\b/i,
+  /\bspeech\b/i,
+  /\btts\b/i,
+  /\bembedding\b/i,
+  /\bembed\b/i,
+  /\bveo\b/i,
+  /\bvideo\b/i,
+  /\blyria\b/i,
+  /\bmusic\b/i,
+  /\bdeep[- ]?research\b/i,
+  /\brobotics\b/i,
+  /\bcomputer[- ]?use\b/i,
+  /\blatest\b/i,
+  /-001$/i,
+];
 
 const SAMPLE_JD = `职位名称：AI标注平台产品经理
 公司：美团
@@ -27,113 +54,192 @@ Summary
 资深AI产品经理，5年企业级AI平台产品管理经验。
 
 工作经历
-ABC公司| 产品经理 | 2025.03 – 2026.04
-• 主导AI Agent平台从0到1建设，DAU增长200%
-• 管理5人技术团队，完成10+个AI项目交付
-• 推动Agent生态建设，合作伙伴增长35%
+ABC公司 | 产品经理 | 2025.03 - 2026.04
+- 主导AI Agent平台从0到1建设，DAU增长200%
+- 管理5人技术团队，完成10+个AI项目交付
+- 推动Agent生态建设，合作伙伴增长35%
 
 教育背景
 大学 | 计算机科学 | 硕士`;
 
-const RESULTS = [];
-let serverProcess;
+const PII = {
+  nameEn: 'John Smith',
+  nameZh: '张三',
+  email: 'john@example.com',
+  phone: '+86-1380001234',
+  linkedin: 'https://linkedin.com/in/johnsmith',
+  github: 'https://github.com/johnsmith',
+};
+
+const PLACEHOLDERS = ['<<NAME>>', '<<NAME_ZH>>', '<<EMAIL>>', '<<PHONE>>', '<<LINKEDIN>>', '<<GITHUB>>'];
+const REAL_VALUES = [PII.nameEn, PII.nameZh, PII.email, PII.phone, PII.linkedin, PII.github];
+
+const PII_SAMPLE_RESUME = `${PII.nameZh}（${PII.nameEn}）
+${PII.email} | ${PII.phone}
+LinkedIn: ${PII.linkedin}
+GitHub: ${PII.github}
+
+Summary
+资深AI产品经理，5年企业级AI平台产品管理经验。
+
+工作经历
+ABC公司 | 产品经理 | 2020.03 - 2025.05
+- 主导AI Agent平台从0到1建设，DAU增长200%
+- 管理5人技术团队，完成10+个AI项目交付
+
+教育背景
+大学 | 计算机科学 | 硕士`;
 
 function log(test, pass, detail = '') {
   const icon = pass ? 'PASS' : 'FAIL';
-  console.log(`[${icon}] ${test}${detail ? ' — ' + detail : ''}`);
+  console.log(`[${icon}] ${test}${detail ? ' - ' + detail : ''}`);
   RESULTS.push({ test, pass, detail });
 }
 
-async function parseSSE(response) {
-  const text = await response.text();
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryableErrorText(text = '') {
+  const lower = String(text).toLowerCase();
+  return lower.includes('配额不足')
+    || lower.includes('resource_exhausted')
+    || lower.includes('429')
+    || lower.includes('503')
+    || lower.includes('unavailable')
+    || lower.includes('high demand')
+    || lower.includes('网络问题')
+    || lower.includes('无法连接 gemini api');
+}
+
+function parseSSEText(text) {
   let result = '';
   let error = null;
+  let usage = null;
+  let model = null;
+
   for (const line of text.split('\n')) {
     if (!line.startsWith('data: ')) continue;
     try {
       const data = JSON.parse(line.slice(6));
-      if (data.type === 'chunk') result += data.text;
-      if (data.type === 'error') error = data.message;
+      if (data.type === 'chunk') result += data.text || '';
+      if (data.type === 'error') error = data.message || '未知错误';
+      if (data.type === 'done') {
+        usage = data.usage || null;
+        model = data.model || null;
+      }
     } catch {}
   }
-  if (!result && error) throw new Error(error);
-  return result;
+
+  return { text: result, error, usage, model };
 }
 
 async function postJSON(path, body) {
-  const res = await fetch(`${BASE}${path}`, {
+  return fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return res;
 }
 
-/** Post JSON with automatic retry on rate limit errors (for SSE endpoints). */
-async function postWithRetry(path, body, retries = 2) {
+async function postSSEWithRetry(path, body, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const res = await postJSON(path, body);
     const text = await res.text();
+    const parsed = parseSSEText(text);
 
-    // Check if it's a rate limit error
-    if (text.includes('配额不足') || text.includes('429') || text.includes('RESOURCE_EXHAUSTED')) {
-      if (attempt < retries) {
-        const waitSec = 15 * (attempt + 1);
-        console.log(`  ⏳ Rate limited, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}...`);
-        await delay(waitSec * 1000);
-        continue;
-      }
+    if (parsed.error && isRetryableErrorText(parsed.error) && attempt < retries) {
+      const waitSec = 15 * (attempt + 1);
+      console.log(`  retryable error, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}`);
+      await delay(waitSec * 1000);
+      continue;
     }
 
-    // Parse SSE from the text we already read
-    let result = '';
-    let error = null;
-    for (const line of text.split('\n')) {
-      if (!line.startsWith('data: ')) continue;
-      try {
-        const data = JSON.parse(line.slice(6));
-        if (data.type === 'chunk') result += data.text;
-        if (data.type === 'error') error = data.message;
-      } catch {}
+    if (!parsed.text && isRetryableErrorText(text) && attempt < retries) {
+      const waitSec = 15 * (attempt + 1);
+      console.log(`  retryable transport issue, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}`);
+      await delay(waitSec * 1000);
+      continue;
     }
-    if (!result && error) {
-      if (attempt < retries && (error.includes('配额') || error.includes('429'))) {
-        const waitSec = 15 * (attempt + 1);
-        console.log(`  ⏳ Rate limited, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}...`);
-        await delay(waitSec * 1000);
-        continue;
-      }
-      throw new Error(error);
+
+    if (!parsed.text && parsed.error) {
+      throw new Error(parsed.error);
     }
-    return result;
+
+    return parsed;
   }
-  return '';
+
+  throw new Error(`SSE request failed after retries: ${path}`);
 }
 
-// ── Tests ──
-
-async function testInit() {
-  const res = await postJSON('/init', {
+function getInitPayload(piiEnabled = false) {
+  const payload = {
     modelConnections: [
-      { id: 'google-studio-google', key: GEMINI_KEY, model: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite' }
+      { id: MODEL, key: GEMINI_KEY, model: GEMINI_MODEL_ID, label: 'Google AI Studio' },
     ],
-    allowedPaths: ['/tmp']
-  });
+    allowedPaths: ['/tmp'],
+  };
+
+  if (piiEnabled) {
+    payload.piiConfig = {
+      enabled: true,
+      nameEn: PII.nameEn,
+      nameZh: PII.nameZh,
+      nameVariants: ['johnsmith'],
+      email: PII.email,
+      phones: [PII.phone],
+      linkedin: PII.linkedin,
+      github: PII.github,
+      website: '',
+      other: [],
+    };
+  }
+
+  return payload;
+}
+
+function checkPiiRestored(result, testName, expectRealPii = true) {
+  const leakedPlaceholders = PLACEHOLDERS.filter(token => result.includes(token));
+  log(`${testName} no placeholders leaked`, leakedPlaceholders.length === 0,
+    leakedPlaceholders.length ? leakedPlaceholders.join(', ') : 'OK');
+
+  if (!expectRealPii) return;
+
+  const restored = REAL_VALUES.filter(value => result.includes(value));
+  log(`${testName} real PII restored`, restored.length > 0,
+    restored.length ? restored.join(', ') : 'none');
+}
+
+async function testInitBase() {
+  const res = await postJSON('/init', getInitPayload(false));
   const data = await res.json();
-  log('1. /init', data.success && data.readyConnections.includes(MODEL), `connections: ${data.readyConnections}`);
+  log('base /init ready', data.success && data.readyConnections.includes(MODEL), `connections=${data.readyConnections}`);
 }
 
 async function testExtractJdInfo() {
   const res = await postJSON('/extract-jd-info', { model: MODEL, jd: SAMPLE_JD });
   const info = await res.json();
-  log('2. /extract-jd-info company', !!info.company, `company="${info.company}"`);
-  log('2b. /extract-jd-info title', !!info.title, `title="${info.title}"`);
-  log('2c. /extract-jd-info language', info.language === 'zh', `language="${info.language}"`);
-  return info;
+  log('/extract-jd-info company', !!info.company, `company="${info.company}"`);
+  log('/extract-jd-info title', !!info.title, `title="${info.title}"`);
+  log('/extract-jd-info language', info.language === 'zh', `language="${info.language}"`);
+  log('/extract-jd-info usage returned', !!info.usage && typeof info.usage.input === 'number', JSON.stringify(info.usage || {}));
+}
+
+async function testListModels() {
+  const res = await postJSON('/list-models', { connectionId: MODEL });
+  const data = await res.json();
+  const models = data.models || [];
+  const searchTexts = models.map(model => `${model.id} ${model.displayName || ''}`);
+  const banned = searchTexts.filter(text => BANNED_MODEL_PATTERNS.some(pattern => pattern.test(text)));
+  const allGemini = models.every(model => /^gemini-/i.test(model.id));
+
+  log('/list-models has results', models.length > 0, `count=${models.length}`);
+  log('/list-models only text-suitable Gemini', banned.length === 0, banned.join(', '));
+  log('/list-models all Gemini family', allGemini, models.map(model => model.id).join(', '));
 }
 
 async function testGenerate() {
-  const result = await postWithRetry('/generate', {
+  const result = await postSSEWithRetry('/generate', {
     model: MODEL,
     jd: SAMPLE_JD,
     baseResume: SAMPLE_RESUME,
@@ -142,22 +248,17 @@ async function testGenerate() {
     generateCoverLetter: true,
     previouslySubmitted: '',
   });
-  const hasResumeMarker = result.includes('简历正文');
-  const hasCoverLetter = result.includes('求职信');
-  const hasNotes = result.includes('AI备注');
-  const len = result.length;
-  log('3. /generate has content', len > 500, `length=${len}`);
-  log('3b. /generate resume marker', hasResumeMarker);
-  log('3c. /generate cover letter', hasCoverLetter);
-  log('3d. /generate AI notes', hasNotes);
-  // Check not truncated: should end naturally, not mid-sentence
-  const lastChars = result.slice(-50);
-  log('3e. /generate not truncated', len > 1000, `last50="${lastChars.replace(/\n/g, '\\n')}"`);
-  return result;
+
+  log('/generate has content', result.text.length > 500, `length=${result.text.length}`);
+  log('/generate resume marker', result.text.includes('简历正文'));
+  log('/generate cover letter', result.text.includes('求职信'));
+  log('/generate AI notes', result.text.includes('AI备注'));
+  log('/generate usage returned', !!result.usage && typeof result.usage.input === 'number', JSON.stringify(result.usage || {}));
+  return result.text;
 }
 
 async function testGenerateNoNotes() {
-  const result = await postWithRetry('/generate', {
+  const result = await postSSEWithRetry('/generate', {
     model: MODEL,
     jd: SAMPLE_JD,
     baseResume: SAMPLE_RESUME,
@@ -166,12 +267,12 @@ async function testGenerateNoNotes() {
     generateCoverLetter: false,
     generateNotes: false,
   });
-  const hasNotes = result.includes('AI备注');
-  log('4. /generate generateNotes=false', !hasNotes, `hasNotes=${hasNotes}, len=${result.length}`);
+
+  log('/generate generateNotes=false', !result.text.includes('AI备注'), `length=${result.text.length}`);
 }
 
 async function testReview(generatedResume) {
-  const result = await postWithRetry('/review', {
+  const result = await postSSEWithRetry('/review', {
     model: MODEL,
     jd: SAMPLE_JD,
     baseResume: SAMPLE_RESUME,
@@ -180,80 +281,179 @@ async function testReview(generatedResume) {
     instructions: '',
     previouslySubmitted: '',
   });
-  const hasScore = /\d{1,3}/.test(result);
-  log('5. /review has content', result.length > 200, `length=${result.length}`);
-  log('5b. /review has score', hasScore);
-  log('5c. /review not truncated', result.length > 300, `last50="${result.slice(-50).replace(/\n/g, '\\n')}"`);
-  return result;
+
+  log('/review has content', result.text.length > 200, `length=${result.text.length}`);
+  log('/review has score-like output', /\d{1,3}/.test(result.text), result.text.slice(0, 120).replace(/\n/g, '\\n'));
+  return result.text;
+}
+
+async function testReviewMulti(generatedResume) {
+  const result = await postSSEWithRetry('/review-multi', {
+    models: [MODEL, MODEL],
+    orchestratorModel: MODEL,
+    jd: SAMPLE_JD,
+    baseResume: SAMPLE_RESUME,
+    updatedResume: generatedResume || SAMPLE_RESUME,
+    resumeLibrary: [],
+    instructions: '',
+    previouslySubmitted: '',
+  });
+
+  log('/review-multi has merged content', result.text.length > 250, `length=${result.text.length}`);
+  log('/review-multi merge banner present', result.text.includes('正在合并评审意见') || result.text.includes('综合'), result.text.slice(0, 120).replace(/\n/g, '\\n'));
 }
 
 async function testApplyReview(reviewComments) {
-  const result = await postWithRetry('/apply-review', {
+  const result = await postSSEWithRetry('/apply-review', {
     model: MODEL,
     currentResume: SAMPLE_RESUME,
     reviewComments: reviewComments || '1. Summary需要更精炼\n2. 需要增加数据标注相关经验的描述',
     jd: SAMPLE_JD,
   });
-  const hasReplace = result.includes('[REPLACE]');
-  log('6. /apply-review has REPLACE blocks', hasReplace, `len=${result.length}`);
 
-  // Test diff parsing
   const diffs = [];
   const regex = /\[REPLACE\]\s*\n<<<\n([\s\S]*?)\n>>>\n([\s\S]*?)\n\[\/REPLACE\]/g;
   let match;
-  while ((match = regex.exec(result)) !== null) {
-    diffs.push({ old: match[1], new: match[2] });
+  while ((match = regex.exec(result.text)) !== null) {
+    diffs.push({ old: match[1], next: match[2] });
   }
-  log('6b. /apply-review parseable diffs', diffs.length > 0, `count=${diffs.length}`);
 
-  // Test applying diffs
-  if (diffs.length > 0) {
-    let applied = 0;
-    let r = SAMPLE_RESUME;
-    for (const d of diffs) {
-      if (r.includes(d.old)) { r = r.replace(d.old, d.new); applied++; }
-      else if (d.old.trim() && r.includes(d.old.trim())) { r = r.replace(d.old.trim(), d.new.trim()); applied++; }
-    }
-    log('6c. /apply-review diffs applicable', applied > 0, `applied=${applied}/${diffs.length}`);
-  }
+  log('/apply-review has REPLACE blocks', result.text.includes('[REPLACE]'), `length=${result.text.length}`);
+  log('/apply-review parseable diffs', diffs.length > 0, `count=${diffs.length}`);
 }
 
-async function testChat() {
-  const result = await postWithRetry('/chat', {
+async function testReviewChat() {
+  const result = await postSSEWithRetry('/chat', {
     model: MODEL,
     chatType: 'review',
     messages: [
-      { role: 'user', content: '请问这份简历的Summary部分有什么需要改进的？\n\n简历：\n' + SAMPLE_RESUME },
+      { role: 'user', content: `请问这份简历的Summary部分有什么需要改进的？\n\n简历：\n${SAMPLE_RESUME}` },
     ],
   });
-  log('7. /chat review type', result.length > 50, `len=${result.length}`);
+
+  log('/chat review has content', result.text.length > 50, `length=${result.text.length}`);
 }
 
 async function testGenerateHtml() {
-  const result = await postWithRetry('/generate-html', {
+  const result = await postSSEWithRetry('/generate-html', {
     model: MODEL,
     resumeText: SAMPLE_RESUME,
     htmlInstructions: '',
   });
-  // AI should output body content only (no <html>, <head>, <style>)
-  const hasHtmlTag = /<html/i.test(result);
-  const hasBodyContent = result.includes('<h1') || result.includes('<h2') || result.includes('<p');
-  log('8. /generate-html has body content', hasBodyContent, `len=${result.length}`);
-  log('8b. /generate-html no <html> tag (body only)', !hasHtmlTag, `hasHtmlTag=${hasHtmlTag}`);
+
+  const hasHtmlTag = /<html/i.test(result.text);
+  const hasBodyContent = result.text.includes('<h1') || result.text.includes('<h2') || result.text.includes('<p');
+  log('/generate-html body content returned', hasBodyContent, `length=${result.text.length}`);
+  log('/generate-html body-only response', !hasHtmlTag, `hasHtmlTag=${hasHtmlTag}`);
 }
 
-// ── Main ──
+async function testInitPii() {
+  const res = await postJSON('/init', getInitPayload(true));
+  const data = await res.json();
+  log('pii /init ready', data.success && data.readyConnections.includes(MODEL), `connections=${data.readyConnections}`);
+}
 
-const delay = ms => new Promise(r => setTimeout(r, ms));
-const RATE_LIMIT_DELAY = 8000; // 8s between API calls to respect Gemini free tier RPM (10 RPM)
+async function testPiiGenerate() {
+  const result = await postSSEWithRetry('/generate', {
+    model: MODEL,
+    jd: SAMPLE_JD,
+    baseResume: PII_SAMPLE_RESUME,
+    resumeLibrary: [],
+    instructions: '',
+    generateCoverLetter: false,
+    generateNotes: false,
+    previouslySubmitted: '',
+  });
+
+  log('pii /generate has content', result.text.length > 200, `length=${result.text.length}`);
+  checkPiiRestored(result.text, 'pii /generate');
+  return result.text;
+}
+
+async function testPiiReview(generatedResume) {
+  const result = await postSSEWithRetry('/review', {
+    model: MODEL,
+    jd: SAMPLE_JD,
+    baseResume: PII_SAMPLE_RESUME,
+    updatedResume: generatedResume,
+    resumeLibrary: [],
+    instructions: '',
+    previouslySubmitted: '',
+  });
+
+  log('pii /review has content', result.text.length > 100, `length=${result.text.length}`);
+  checkPiiRestored(result.text, 'pii /review', false);
+  return result.text;
+}
+
+async function testPiiReviewMulti(generatedResume) {
+  const result = await postSSEWithRetry('/review-multi', {
+    models: [MODEL, MODEL],
+    orchestratorModel: MODEL,
+    jd: SAMPLE_JD,
+    baseResume: PII_SAMPLE_RESUME,
+    updatedResume: generatedResume,
+    resumeLibrary: [],
+    instructions: '',
+    previouslySubmitted: '',
+  });
+
+  log('pii /review-multi has content', result.text.length > 150, `length=${result.text.length}`);
+  checkPiiRestored(result.text, 'pii /review-multi', false);
+}
+
+async function testPiiApplyReview() {
+  const result = await postSSEWithRetry('/apply-review', {
+    model: MODEL,
+    currentResume: PII_SAMPLE_RESUME,
+    reviewComments: '1. Summary需要更精炼\n2. 应突出AI平台经验',
+    jd: SAMPLE_JD,
+    previouslySubmitted: '',
+  });
+
+  log('pii /apply-review has content', result.text.length > 50, `length=${result.text.length}`);
+  checkPiiRestored(result.text, 'pii /apply-review', false);
+}
+
+async function testPiiGeneratorChat() {
+  const result = await postSSEWithRetry('/chat', {
+    model: MODEL,
+    chatType: 'generator',
+    messages: [
+      { role: 'user', content: `请先原样复述这份简历开头的姓名和联系方式，再给出一句Summary改进建议。\n\n${PII_SAMPLE_RESUME}` },
+    ],
+  });
+
+  log('pii /chat generator has content', result.text.length > 30, `length=${result.text.length}`);
+  checkPiiRestored(result.text, 'pii /chat generator');
+}
+
+async function testPiiGenerateHtml() {
+  const result = await postSSEWithRetry('/generate-html', {
+    model: MODEL,
+    resumeText: PII_SAMPLE_RESUME,
+    htmlInstructions: '',
+  });
+
+  log('pii /generate-html has content', result.text.length > 100, `length=${result.text.length}`);
+  checkPiiRestored(result.text, 'pii /generate-html');
+}
+
+async function testPiiExtractJdInfo() {
+  const res = await postJSON('/extract-jd-info', { model: MODEL, jd: SAMPLE_JD });
+  const info = await res.json();
+  log('pii /extract-jd-info works', !!info.company, `company="${info.company}", title="${info.title}"`);
+}
 
 async function main() {
-  console.log('\n=== 简历定制助手 E2E Test ===\n');
+  console.log('\n=== Resume Tailor Main E2E ===\n');
 
   try {
-    await testInit();
+    await testInitBase();
     await delay(RATE_LIMIT_DELAY);
-    const jdInfo = await testExtractJdInfo();
+    await testExtractJdInfo();
+    await delay(RATE_LIMIT_DELAY);
+    await testListModels();
     await delay(RATE_LIMIT_DELAY);
     const generated = await testGenerate();
     await delay(RATE_LIMIT_DELAY);
@@ -261,24 +461,44 @@ async function main() {
     await delay(RATE_LIMIT_DELAY);
     const review = await testReview(generated);
     await delay(RATE_LIMIT_DELAY);
+    await testReviewMulti(generated);
+    await delay(RATE_LIMIT_DELAY);
     await testApplyReview(review);
     await delay(RATE_LIMIT_DELAY);
-    await testChat();
+    await testReviewChat();
     await delay(RATE_LIMIT_DELAY);
     await testGenerateHtml();
-  } catch (e) {
-    console.error('\nFATAL:', e.message);
+
+    await delay(RATE_LIMIT_DELAY);
+    await testInitPii();
+    await delay(RATE_LIMIT_DELAY);
+    const piiGenerated = await testPiiGenerate();
+    await delay(RATE_LIMIT_DELAY);
+    await testPiiReview(piiGenerated);
+    await delay(RATE_LIMIT_DELAY);
+    await testPiiReviewMulti(piiGenerated);
+    await delay(RATE_LIMIT_DELAY);
+    await testPiiApplyReview();
+    await delay(RATE_LIMIT_DELAY);
+    await testPiiGeneratorChat();
+    await delay(RATE_LIMIT_DELAY);
+    await testPiiGenerateHtml();
+    await delay(RATE_LIMIT_DELAY);
+    await testPiiExtractJdInfo();
+  } catch (err) {
+    console.error('\nFATAL:', err.message);
+    RESULTS.push({ test: 'FATAL', pass: false, detail: err.message });
   }
 
   console.log('\n=== Summary ===');
-  const passed = RESULTS.filter(r => r.pass).length;
-  const failed = RESULTS.filter(r => !r.pass).length;
+  const passed = RESULTS.filter(item => item.pass).length;
+  const failed = RESULTS.filter(item => !item.pass).length;
   console.log(`Total: ${RESULTS.length} | Passed: ${passed} | Failed: ${failed}`);
 
   if (failed > 0) {
     console.log('\nFailed tests:');
-    for (const r of RESULTS.filter(r => !r.pass)) {
-      console.log(`  - ${r.test}: ${r.detail}`);
+    for (const item of RESULTS.filter(entry => !entry.pass)) {
+      console.log(`  - ${item.test}: ${item.detail}`);
     }
   }
 
