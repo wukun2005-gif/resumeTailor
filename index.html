@@ -124,8 +124,58 @@
             <select id="cfgAgentHtml"></select>
           </div>
         </fieldset>
+
+        <fieldset>
+          <legend>隐私保护（PII 脱敏 — 发送AI前自动替换个人信息）</legend>
+          <div class="form-row">
+            <label class="checkbox-label"><input type="checkbox" id="cfgPiiEnabled"> 启用 PII 脱敏</label>
+          </div>
+          <div class="form-row-inline">
+            <div class="form-row flex-1">
+              <label>英文姓名</label>
+              <input type="text" id="cfgPiiNameEn" placeholder="Wu Kun">
+            </div>
+            <div class="form-row flex-1">
+              <label>中文姓名</label>
+              <input type="text" id="cfgPiiNameZh" placeholder="吴坤">
+            </div>
+          </div>
+          <div class="form-row">
+            <label>姓名变体（逗号分隔，如用户名）</label>
+            <input type="text" id="cfgPiiNameVariants" placeholder="wukun, KunWu">
+          </div>
+          <div class="form-row-inline">
+            <div class="form-row flex-1">
+              <label>邮箱</label>
+              <input type="text" id="cfgPiiEmail" placeholder="name@example.com">
+            </div>
+            <div class="form-row flex-1">
+              <label>电话号码（逗号分隔多个）</label>
+              <input type="text" id="cfgPiiPhone" placeholder="+86-13501168055">
+            </div>
+          </div>
+          <div class="form-row-inline">
+            <div class="form-row flex-1">
+              <label>LinkedIn URL</label>
+              <input type="text" id="cfgPiiLinkedin" placeholder="https://linkedin.com/in/...">
+            </div>
+            <div class="form-row flex-1">
+              <label>GitHub URL</label>
+              <input type="text" id="cfgPiiGithub" placeholder="https://github.com/...">
+            </div>
+          </div>
+          <div class="form-row-inline">
+            <div class="form-row flex-1">
+              <label>个人网站</label>
+              <input type="text" id="cfgPiiWebsite" placeholder="https://...">
+            </div>
+            <div class="form-row flex-1">
+              <label>其他PII（逗号分隔）</label>
+              <input type="text" id="cfgPiiOther" placeholder="家庭住址等">
+            </div>
+          </div>
+        </fieldset>
       </div>
-      <div class="modal-footer">
         <span id="settingsStatus" class="status-text"></span>
         <button id="settingsSave" class="btn-primary">保存并连接</button>
       </div>

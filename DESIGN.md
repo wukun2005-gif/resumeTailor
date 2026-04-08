@@ -463,6 +463,29 @@ Mock 数据包含：
 
 ## Change Log
 
+### 2026-04-08 — PII 脱敏保护（V1.x）
+
+**概述**：在 AI API 调用链路中增加 PII（个人身份信息）脱敏/恢复拦截层。所有用户 PII（姓名、邮箱、电话、社交媒体链接等）在发送给 AI API 前自动替换为占位符（`<<NAME>>`、`<<EMAIL>>` 等），AI 返回结果中的占位符自动恢复为真实 PII。PII 映射表仅存在于服务端内存，绝不离开本地。
+
+**架构设计**：
+- 拦截点：Express 路由层，在 prompt 模板构建前 sanitize，在 SSE 流式返回中 restore
+- 占位符格式：`<<TYPE>>`（双尖括号），与 diff 格式 `<<<`/`>>>` 不冲突
+- 替换策略：按 real 值长度降序（长的先替换），避免短子串嵌入长字符串导致双重替换
+- 流式恢复：缓冲机制处理跨 chunk 占位符分割，检测未闭合 `<<` 并等待后续 chunk
+- PII 存储：前端用 AES-256-GCM 加密存储在 localStorage（`pii_` 前缀）
+
+**覆盖路由**：`/generate`、`/review`、`/review-multi`、`/apply-review`、`/chat`、`/generate-html`、`/extract-jd-info`（共 7 条）
+
+**改动文件**：
+
+| 文件 | 操作 |
+|------|------|
+| `server/services/piiSanitizer.js` | 新建 — 8 个导出函数（setPiiConfig/getPiiEntries/sanitize/restore/sanitizeRequestBody/sanitizeLibrary/sanitizeMessages/createStreamRestorer） |
+| `server/routes/api.js` | 修改 — import piiSanitizer + `/init` 接收 piiConfig + 7 条路由加 sanitize/restore |
+| `index.html` | 修改 — 设置弹窗加 PII 配置 fieldset（启用开关 + 9 个 PII 输入字段） |
+| `src/main.js` | 修改 — PII DOM 引用 + buildPiiConfig() + save/restore + initAPI 传递 piiConfig |
+| `src/state.js` | 修改 — isCredentialKey() 扩展 `pii_` 前缀识别 |
+
 ### 2026-04-07 — Token 消费地毯式审计 + 优化（第三轮）
 
 **概述**：按"上下文精简/减少冗余调用/缓存复用/避免重复读取"四方向对全部 7+条 AI 路由逐一审计。在保留用户要求的完整 context（library、JD、instructions、AI 备注）前提下，实施剩余可优化项。

@@ -20,20 +20,20 @@ const SAMPLE_JD = `职位名称：AI标注平台产品经理
 2. 熟悉AI/ML工作流
 3. 有数据标注或AI平台经验优先`;
 
-const SAMPLE_RESUME = `吴坤
-wukun2005@gmail.com | +86-13501168055
+const SAMPLE_RESUME = `张三
+abc@mailbox.com | +86-1234567890
 
 Summary
-资深AI产品经理，8年企业级AI平台产品管理经验。
+资深AI产品经理，5年企业级AI平台产品管理经验。
 
 工作经历
-微软（中国）| 高级产品经理 | 2017.03 – 2025.05
+ABC公司| 产品经理 | 2025.03 – 2026.04
 • 主导AI Agent平台从0到1建设，DAU增长200%
 • 管理5人技术团队，完成10+个AI项目交付
-• 推动Cortana技能生态建设，合作伙伴增长35%
+• 推动Agent生态建设，合作伙伴增长35%
 
 教育背景
-北京大学 | 计算机科学 | 硕士`;
+大学 | 计算机科学 | 硕士`;
 
 const RESULTS = [];
 let serverProcess;
@@ -207,17 +207,27 @@ async function testGenerateHtml() {
 
 // ── Main ──
 
+const delay = ms => new Promise(r => setTimeout(r, ms));
+const RATE_LIMIT_DELAY = 4000; // 4s between API calls to respect Gemini free tier RPM
+
 async function main() {
   console.log('\n=== 简历定制助手 E2E Test ===\n');
 
   try {
     await testInit();
+    await delay(RATE_LIMIT_DELAY);
     const jdInfo = await testExtractJdInfo();
+    await delay(RATE_LIMIT_DELAY);
     const generated = await testGenerate();
+    await delay(RATE_LIMIT_DELAY);
     await testGenerateNoNotes();
+    await delay(RATE_LIMIT_DELAY);
     const review = await testReview(generated);
+    await delay(RATE_LIMIT_DELAY);
     await testApplyReview(review);
+    await delay(RATE_LIMIT_DELAY);
     await testChat();
+    await delay(RATE_LIMIT_DELAY);
     await testGenerateHtml();
   } catch (e) {
     console.error('\nFATAL:', e.message);

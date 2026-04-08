@@ -82,5 +82,5 @@ export async function setCredential(key, value) {
 }
 
 export function isCredentialKey(key) {
-  return CREDENTIAL_KEYS.includes(key) || key.startsWith('connKey_');
+  return CREDENTIAL_KEYS.includes(key) || key.startsWith('connKey_') || key.startsWith('pii_');
 }

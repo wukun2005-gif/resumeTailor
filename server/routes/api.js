@@ -5,6 +5,7 @@ import { initOpenAICompat, callOpenAICompat } from '../services/openai-compat.js
 import { readFileContent, listResumeFiles } from '../services/fileReader.js';
 import { getLibraryDigest, appendToDigestCache } from '../services/libraryCache.js';
 import { getResumeGenerationPrompt, getReviewPrompt, getReviewPromptConcise, getReviewMergePrompt, getHtmlGenerationPrompt, getApplyReviewPrompt } from '../prompts/templates.js';
+import { setPiiConfig, getPiiEntries, sanitizeRequestBody, sanitizeLibrary, sanitizeMessages, createStreamRestorer } from '../services/piiSanitizer.js';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -97,7 +98,10 @@ async function streamMock(res, text) {
 /* ── API routes ── */
 
 router.post('/init', (req, res) => {
-  const { modelConnections, allowedPaths } = req.body;
+  const { modelConnections, allowedPaths, piiConfig } = req.body;
+
+  // PII sanitization config
+  if (piiConfig) setPiiConfig(piiConfig);
 
   // Backward compat: accept old format
   const { geminiKey, geminiModel, anthropicKey, anthropicBaseUrl } = req.body;
@@ -207,10 +211,18 @@ router.post('/generate', async (req, res) => {
   }
   setupSSE(res);
   try {
+    const piiEntries = getPiiEntries();
+    if (piiEntries.length > 0) {
+      sanitizeRequestBody(req.body, ['jd', 'baseResume', 'instructions', 'previouslySubmitted'], piiEntries);
+      sanitizeLibrary(req.body.resumeLibrary, piiEntries);
+    }
     const { model, jd, baseResume, resumeLibrary, instructions, generateCoverLetter, previouslySubmitted, generateNotes } = req.body;
     const caller = getModelCaller(model);
     const { system, user, userBlocks } = getResumeGenerationPrompt({ jd, originalResume: baseResume, resumeLibrary, instructions, previouslySubmitted, generateCoverLetter, generateNotes });
-    await caller(user, chunk => sendSSE(res, { type: 'chunk', text: chunk }), { system, maxTokens: 8192, userBlocks });
+    const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
+    const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
+    await caller(user, onChunk, { system, maxTokens: 8192, userBlocks });
+    if (restorer) restorer.end();
     sendSSE(res, { type: 'done' });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
@@ -225,10 +237,18 @@ router.post('/review', async (req, res) => {
   }
   setupSSE(res);
   try {
+    const piiEntries = getPiiEntries();
+    if (piiEntries.length > 0) {
+      sanitizeRequestBody(req.body, ['jd', 'baseResume', 'updatedResume', 'instructions', 'previouslySubmitted'], piiEntries);
+      sanitizeLibrary(req.body.resumeLibrary, piiEntries);
+    }
     const { model, jd, baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted } = req.body;
     const caller = getModelCaller(model);
     const { system, user, userBlocks } = getReviewPrompt({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted });
-    await caller(user, chunk => sendSSE(res, { type: 'chunk', text: chunk }), { system, maxTokens: 6144, userBlocks });
+    const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
+    const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
+    await caller(user, onChunk, { system, maxTokens: 6144, userBlocks });
+    if (restorer) restorer.end();
     sendSSE(res, { type: 'done' });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
@@ -244,6 +264,11 @@ router.post('/review-multi', async (req, res) => {
   }
   setupSSE(res);
   try {
+    const piiEntries = getPiiEntries();
+    if (piiEntries.length > 0) {
+      sanitizeRequestBody(req.body, ['jd', 'baseResume', 'updatedResume', 'instructions', 'previouslySubmitted'], piiEntries);
+      sanitizeLibrary(req.body.resumeLibrary, piiEntries);
+    }
     const { models, orchestratorModel, jd, baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted } = req.body;
     const { system, user, userBlocks } = getReviewPromptConcise({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted });
 
@@ -259,7 +284,10 @@ router.post('/review-multi', async (req, res) => {
     sendSSE(res, { type: 'chunk', text: '--- 正在合并评审意见 ---\n\n' });
     const { system: mergeSystem, user: mergeUser } = getReviewMergePrompt(results.map(r => ({ model: r.model, label: getConnectionLabel(r.model), review: r.result })));
     const mergeCaller = getModelCaller(orchestratorModel);
-    await mergeCaller(mergeUser, chunk => sendSSE(res, { type: 'chunk', text: chunk }), { system: mergeSystem, maxTokens: 4096 });
+    const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
+    const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
+    await mergeCaller(mergeUser, onChunk, { system: mergeSystem, maxTokens: 4096 });
+    if (restorer) restorer.end();
 
     sendSSE(res, { type: 'done' });
   } catch (err) {
@@ -275,10 +303,17 @@ router.post('/apply-review', async (req, res) => {
   }
   setupSSE(res);
   try {
+    const piiEntries = getPiiEntries();
+    if (piiEntries.length > 0) {
+      sanitizeRequestBody(req.body, ['currentResume', 'reviewComments', 'jd', 'previouslySubmitted'], piiEntries);
+    }
     const { model, currentResume, reviewComments, jd, previouslySubmitted } = req.body;
     const caller = getModelCaller(model);
     const { system, user } = getApplyReviewPrompt({ currentResume, reviewComments, jd, previouslySubmitted });
-    await caller(user, chunk => sendSSE(res, { type: 'chunk', text: chunk }), { system, maxTokens: 4096 });
+    const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
+    const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
+    await caller(user, onChunk, { system, maxTokens: 4096 });
+    if (restorer) restorer.end();
     sendSSE(res, { type: 'done' });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
@@ -290,6 +325,10 @@ router.post('/chat', async (req, res) => {
   if (req.body.mock) return streamMock(res, MOCK.chat);
   setupSSE(res);
   try {
+    const piiEntries = getPiiEntries();
+    if (piiEntries.length > 0) {
+      sanitizeMessages(req.body.messages, piiEntries);
+    }
     const { model, messages, chatType } = req.body;
     const chatConfigs = {
       review:    { maxTokens: 4096, system: '你是简历评审助手。回答简明扼要，不超过3段。不要重新生成整份简历。' },
@@ -298,7 +337,10 @@ router.post('/chat', async (req, res) => {
     };
     const config = chatConfigs[chatType] || { maxTokens: 8192 };
     const caller = getModelCaller(model);
-    await caller(null, chunk => sendSSE(res, { type: 'chunk', text: chunk }), { messages, maxTokens: config.maxTokens, system: config.system });
+    const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
+    const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
+    await caller(null, onChunk, { messages, maxTokens: config.maxTokens, system: config.system });
+    if (restorer) restorer.end();
     sendSSE(res, { type: 'done' });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
@@ -310,10 +352,17 @@ router.post('/generate-html', async (req, res) => {
   if (req.body.mock) return streamMock(res, MOCK.html);
   setupSSE(res);
   try {
+    const piiEntries = getPiiEntries();
+    if (piiEntries.length > 0) {
+      sanitizeRequestBody(req.body, ['resumeText', 'htmlInstructions'], piiEntries);
+    }
     const { model, resumeText, htmlInstructions, hyperlinks } = req.body;
     const caller = getModelCaller(model);
     const { system, user } = getHtmlGenerationPrompt({ resumeText, formatRequirements: htmlInstructions, hyperlinks });
-    await caller(user, chunk => sendSSE(res, { type: 'chunk', text: chunk }), { system, maxTokens: 8192 });
+    const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
+    const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
+    await caller(user, onChunk, { system, maxTokens: 8192 });
+    if (restorer) restorer.end();
     sendSSE(res, { type: 'done' });
   } catch (err) {
     sendSSE(res, { type: 'error', message: err.message });
@@ -325,6 +374,10 @@ router.post('/generate-html', async (req, res) => {
 router.post('/extract-jd-info', async (req, res) => {
   if (req.body.mock) return res.json(JSON.parse(MOCK.extractJdInfo));
   try {
+    const piiEntries = getPiiEntries();
+    if (piiEntries.length > 0) {
+      sanitizeRequestBody(req.body, ['jd'], piiEntries);
+    }
     const { model, jd } = req.body;
     const caller = getModelCaller(model);
     const prompt = `从以下JD中提取公司名、部门名、职位名称、和JD语言。只输出JSON格式，不要输出任何其他内容：

@@ -73,6 +73,12 @@ const els = {
   generateHtmlBtn: $('generateHtmlBtn'), htmlStatus: $('htmlStatus'),
   htmlChatSection: $('htmlChatSection'), htmlChatHistory: $('htmlChatHistory'), htmlChatInput: $('htmlChatInput'), htmlChatSendBtn: $('htmlChatSendBtn'),
   htmlPdfUpload: $('htmlPdfUpload'), htmlUploadStatus: $('htmlUploadStatus'),
+  // PII config
+  cfgPiiEnabled: $('cfgPiiEnabled'),
+  cfgPiiNameEn: $('cfgPiiNameEn'), cfgPiiNameZh: $('cfgPiiNameZh'), cfgPiiNameVariants: $('cfgPiiNameVariants'),
+  cfgPiiEmail: $('cfgPiiEmail'), cfgPiiPhone: $('cfgPiiPhone'),
+  cfgPiiLinkedin: $('cfgPiiLinkedin'), cfgPiiGithub: $('cfgPiiGithub'),
+  cfgPiiWebsite: $('cfgPiiWebsite'), cfgPiiOther: $('cfgPiiOther'),
 };
 
 let libraryFiles = [];
@@ -151,6 +157,24 @@ async function init() {
   }
 }
 
+function buildPiiConfig() {
+  const enabled = els.cfgPiiEnabled.checked;
+  if (!enabled) return { enabled: false };
+  const splitTrim = val => val.split(',').map(s => s.trim()).filter(Boolean);
+  return {
+    enabled: true,
+    nameEn: els.cfgPiiNameEn.value.trim(),
+    nameZh: els.cfgPiiNameZh.value.trim(),
+    nameVariants: splitTrim(els.cfgPiiNameVariants.value),
+    email: els.cfgPiiEmail.value.trim(),
+    phones: splitTrim(els.cfgPiiPhone.value),
+    linkedin: els.cfgPiiLinkedin.value.trim(),
+    github: els.cfgPiiGithub.value.trim(),
+    website: els.cfgPiiWebsite.value.trim(),
+    other: splitTrim(els.cfgPiiOther.value),
+  };
+}
+
 async function autoInitAPI() {
   const connections = buildModelConnections();
   if (connections.length === 0) return;
@@ -158,7 +182,7 @@ async function autoInitAPI() {
     const allowedPaths = ['/Users/wukun/Documents/tmp/resumeTailor/vscCCOpus'];
     const libPath = els.libraryPath.value.trim();
     if (libPath) allowedPaths.push(libPath);
-    await api.initAPI({ modelConnections: connections, allowedPaths });
+    await api.initAPI({ modelConnections: connections, allowedPaths, piiConfig: buildPiiConfig() });
   } catch {}
 }
 
@@ -217,6 +241,18 @@ async function restoreState() {
   els.genInstructions.value = state.get('genInstructions');
   els.htmlInstructions.value = state.get('htmlInstructions');
   els.mockMode.checked = state.get('mockMode', false);
+
+  // Restore PII config
+  els.cfgPiiEnabled.checked = state.get('piiEnabled', false);
+  els.cfgPiiNameEn.value = await state.getCredential('pii_nameEn');
+  els.cfgPiiNameZh.value = await state.getCredential('pii_nameZh');
+  els.cfgPiiNameVariants.value = await state.getCredential('pii_nameVariants');
+  els.cfgPiiEmail.value = await state.getCredential('pii_email');
+  els.cfgPiiPhone.value = await state.getCredential('pii_phone');
+  els.cfgPiiLinkedin.value = await state.getCredential('pii_linkedin');
+  els.cfgPiiGithub.value = await state.getCredential('pii_github');
+  els.cfgPiiWebsite.value = await state.getCredential('pii_website');
+  els.cfgPiiOther.value = await state.getCredential('pii_other');
 }
 
 function restoreAgentAssignments() {
@@ -349,6 +385,18 @@ async function saveSettings() {
   state.set('reviewerModels', reviewerModels);
   state.set('htmlModel', els.cfgAgentHtml.value);
 
+  // Save PII config (encrypted)
+  state.set('piiEnabled', els.cfgPiiEnabled.checked);
+  await state.setCredential('pii_nameEn', els.cfgPiiNameEn.value.trim());
+  await state.setCredential('pii_nameZh', els.cfgPiiNameZh.value.trim());
+  await state.setCredential('pii_nameVariants', els.cfgPiiNameVariants.value.trim());
+  await state.setCredential('pii_email', els.cfgPiiEmail.value.trim());
+  await state.setCredential('pii_phone', els.cfgPiiPhone.value.trim());
+  await state.setCredential('pii_linkedin', els.cfgPiiLinkedin.value.trim());
+  await state.setCredential('pii_github', els.cfgPiiGithub.value.trim());
+  await state.setCredential('pii_website', els.cfgPiiWebsite.value.trim());
+  await state.setCredential('pii_other', els.cfgPiiOther.value.trim());
+
   // Update agent dropdowns with latest connections
   populateAgentDropdowns();
   restoreAgentAssignments();
@@ -361,7 +409,7 @@ async function saveSettings() {
     if (libPath) allowedPaths.push(libPath);
     const connections = buildModelConnections();
 
-    const result = await api.initAPI({ modelConnections: connections, allowedPaths });
+    const result = await api.initAPI({ modelConnections: connections, allowedPaths, piiConfig: buildPiiConfig() });
     const readyCount = result.readyConnections?.length || 0;
     if (readyCount > 0) {
       els.settingsStatus.textContent = `${readyCount} 个连接已就绪: ${result.readyConnections.join(', ')}`;
