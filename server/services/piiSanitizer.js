@@ -177,6 +177,12 @@ export function sanitizeMessages(messages, entries) {
  */
 export function createStreamRestorer(entries, onFlushed) {
   let buffer = '';
+  const placeholderPrefixes = new Set(['<', '<<']);
+  for (const { placeholder } of entries) {
+    for (let i = 1; i < placeholder.length; i++) {
+      placeholderPrefixes.add(placeholder.slice(0, i));
+    }
+  }
 
   function flush(final) {
     if (!buffer) return;
@@ -191,18 +197,14 @@ export function createStreamRestorer(entries, onFlushed) {
       return;
     }
 
-    // 检查末尾是否有未闭合的 << （可能是被切割的占位符）
-    const lastOpen = processed.lastIndexOf('<<');
-    if (lastOpen !== -1) {
-      const lastClose = processed.indexOf('>>', lastOpen);
-      if (lastClose === -1) {
-        // 有未闭合的 << → 可能是正在传输的占位符
-        // 发送 << 之前的内容，保留 << 及之后的到 buffer
-        const safe = processed.slice(0, lastOpen);
-        if (safe) onFlushed(safe);
-        buffer = processed.slice(lastOpen);
-        return;
-      }
+    // 保留末尾可能被切断的占位符前缀，例如 "<"、"<<"、"<<EMAIL"
+    for (let keep = Math.min(processed.length, 32); keep > 0; keep--) {
+      const suffix = processed.slice(-keep);
+      if (!placeholderPrefixes.has(suffix)) continue;
+      const safe = processed.slice(0, -keep);
+      if (safe) onFlushed(safe);
+      buffer = suffix;
+      return;
     }
 
     // 无未闭合占位符，全部发送

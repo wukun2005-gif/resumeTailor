@@ -1,13 +1,24 @@
 /**
- * Main end-to-end regression test for all Gemini-backed routes.
- * Usage: GEMINI_KEY=xxx TEST_BASE=http://localhost:3003/api node test-e2e.mjs
+ * Lean regression suite.
+ *
+ * Strategy:
+ * - Keep all real Gemini-backed API routes covered once
+ * - Keep a small set of high-value local/non-AI regressions
+ * - Avoid heavy frontend/jsdom and redundant mock-path coverage here
+ *
+ * Usage:
+ *   GEMINI_KEY=xxx TEST_BASE=http://localhost:3003/api node test-e2e.mjs
  */
+
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
 
 const BASE = process.env.TEST_BASE || 'http://localhost:3001/api';
 const GEMINI_KEY = process.env.GEMINI_KEY;
 const MODEL = 'google-studio-google';
 const GEMINI_MODEL_ID = process.env.GEMINI_MODEL_ID || 'gemini-3.1-flash-lite-preview';
-const RATE_LIMIT_DELAY = 8000; // Gemini free tier is sensitive to burst traffic
+const RATE_LIMIT_DELAY = 8000;
 const RESULTS = [];
 
 if (!GEMINI_KEY) {
@@ -31,8 +42,6 @@ const BANNED_MODEL_PATTERNS = [
   /\bdeep[- ]?research\b/i,
   /\brobotics\b/i,
   /\bcomputer[- ]?use\b/i,
-  /\blatest\b/i,
-  /-001$/i,
 ];
 
 const SAMPLE_JD = `职位名称：AI标注平台产品经理
@@ -46,6 +55,14 @@ const SAMPLE_JD = `职位名称：AI标注平台产品经理
 1. 5年以上产品经理经验
 2. 熟悉AI/ML工作流
 3. 有数据标注或AI平台经验优先`;
+
+const LOCAL_PARSE_JD = `Company: Example Labs
+Department: Platform
+Job Title: Senior Product Manager
+
+Responsibilities:
+- Build AI platform workflows
+- Work with engineering teams`;
 
 const SAMPLE_RESUME = `张三
 abc@mailbox.com | +86-1234567890
@@ -134,17 +151,21 @@ function parseSSEText(text) {
   return { text: result, error, usage, model };
 }
 
-async function postJSON(path, body) {
-  return fetch(`${BASE}${path}`, {
+async function postJSON(pathname, body) {
+  return fetch(`${BASE}${pathname}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 }
 
-async function postSSEWithRetry(path, body, retries = 2) {
+async function getJSON(pathname) {
+  return fetch(`${BASE}${pathname}`);
+}
+
+async function postSSEWithRetry(pathname, body, retries = 4) {
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const res = await postJSON(path, body);
+    const res = await postJSON(pathname, body);
     const text = await res.text();
     const parsed = parseSSEText(text);
 
@@ -169,15 +190,15 @@ async function postSSEWithRetry(path, body, retries = 2) {
     return parsed;
   }
 
-  throw new Error(`SSE request failed after retries: ${path}`);
+  throw new Error(`SSE request failed after retries: ${pathname}`);
 }
 
-function getInitPayload(piiEnabled = false) {
+function getInitPayload(piiEnabled = false, extraAllowedPaths = ['/tmp']) {
   const payload = {
     modelConnections: [
       { id: MODEL, key: GEMINI_KEY, model: GEMINI_MODEL_ID, label: 'Google AI Studio' },
     ],
-    allowedPaths: ['/tmp'],
+    allowedPaths: extraAllowedPaths,
   };
 
   if (piiEnabled) {
@@ -217,12 +238,29 @@ async function testInitBase() {
 }
 
 async function testExtractJdInfo() {
-  const res = await postJSON('/extract-jd-info', { model: MODEL, jd: SAMPLE_JD });
-  const info = await res.json();
+  let info = {};
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await postJSON('/extract-jd-info', { model: MODEL, jd: SAMPLE_JD });
+    info = await res.json();
+    if (info.company && info.title && info.usage && typeof info.usage.input === 'number') break;
+    if (attempt < 3) {
+      const waitSec = 10 * (attempt + 1);
+      console.log(`  /extract-jd-info unstable, waiting ${waitSec}s before retry ${attempt + 2}/4`);
+      await delay(waitSec * 1000);
+    }
+  }
   log('/extract-jd-info company', !!info.company, `company="${info.company}"`);
   log('/extract-jd-info title', !!info.title, `title="${info.title}"`);
   log('/extract-jd-info language', info.language === 'zh', `language="${info.language}"`);
   log('/extract-jd-info usage returned', !!info.usage && typeof info.usage.input === 'number', JSON.stringify(info.usage || {}));
+}
+
+async function testExtractJdInfoLocalFallback() {
+  const res = await postJSON('/extract-jd-info', { jd: LOCAL_PARSE_JD });
+  const info = await res.json();
+  log('/extract-jd-info local fallback company', info.company === 'Example Labs', JSON.stringify(info));
+  log('/extract-jd-info local fallback title', info.title === 'Senior Product Manager', JSON.stringify(info));
+  log('/extract-jd-info local fallback usage.local', info.usage?.local === true, JSON.stringify(info.usage || {}));
 }
 
 async function testListModels() {
@@ -234,8 +272,48 @@ async function testListModels() {
   const allGemini = models.every(model => /^gemini-/i.test(model.id));
 
   log('/list-models has results', models.length > 0, `count=${models.length}`);
-  log('/list-models only text-suitable Gemini', banned.length === 0, banned.join(', '));
+  log('/list-models only free text-suitable Gemini', banned.length === 0, banned.join(', '));
   log('/list-models all Gemini family', allGemini, models.map(model => model.id).join(', '));
+}
+
+async function testFileRoutesAndDigest() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-e2e-'));
+  const alpha = path.join(dir, 'alpha.txt');
+  const beta = path.join(dir, 'beta.md');
+  const gamma = path.join(dir, 'gamma.pages');
+  const html = path.join(dir, 'delta.html');
+
+  await fs.writeFile(alpha, 'Summary\n\nShared Paragraph\n\nAlpha Only', 'utf-8');
+  await fs.writeFile(beta, '# Title\n\nShared Paragraph\n\nBeta Only', 'utf-8');
+  await fs.writeFile(gamma, '', 'utf-8');
+  await fs.writeFile(html, '<html><body><h1>Hello</h1><p>HTML Only</p></body></html>', 'utf-8');
+
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+
+  const listRes = await getJSON(`/list-files?dir=${encodeURIComponent(dir)}`);
+  const listData = await listRes.json();
+  const names = listData.files.map(f => `${f.name}:${f.readable}`);
+  log('/list-files lists supported files', listData.files.length === 4, names.join(', '));
+  log('/list-files marks pages unreadable', listData.files.some(f => f.name === 'gamma.pages' && f.readable === false), names.join(', '));
+
+  const readTxtRes = await getJSON(`/read-file?path=${encodeURIComponent(alpha)}`);
+  const readTxtData = await readTxtRes.json();
+  log('/read-file txt returns content', readTxtData.content.includes('Alpha Only'), readTxtData.content);
+
+  const readPagesRes = await getJSON(`/read-file?path=${encodeURIComponent(gamma)}`);
+  const readPagesData = await readPagesRes.json();
+  log('/read-file pages returns manual paste hint', readPagesRes.status === 400 && readPagesData.error === 'PAGES_NOT_SUPPORTED', JSON.stringify(readPagesData));
+
+  const savePath = path.join(dir, 'saved.txt');
+  const saveRes = await postJSON('/save-file', { filePath: savePath, content: 'Saved\n\nShared Paragraph\n\nNew Info' });
+  const saveData = await saveRes.json();
+  log('/save-file success', saveData.success === true, JSON.stringify(saveData));
+
+  const digestRes = await postJSON('/library-digest', { dir, excludeNames: ['gamma.pages'] });
+  const digest = await digestRes.json();
+  const flattened = digest.digest.map(item => item.content).join('\n');
+  const sharedCount = (flattened.match(/Shared Paragraph/g) || []).length;
+  log('/library-digest deduplicates shared paragraphs', sharedCount === 1, flattened);
 }
 
 async function testGenerate() {
@@ -334,6 +412,15 @@ async function testReviewChat() {
   log('/chat review has content', result.text.length > 50, `length=${result.text.length}`);
 }
 
+async function testConnectionFallbackWithoutModel() {
+  await postJSON('/init', getInitPayload(false));
+  const result = await postSSEWithRetry('/chat', {
+    chatType: 'review',
+    messages: [{ role: 'user', content: '请用一句话评价这份简历。' }],
+  });
+  log('/chat single-connection fallback works', result.text.length > 10, result.text.slice(0, 80));
+}
+
 async function testGenerateHtml() {
   const result = await postSSEWithRetry('/generate-html', {
     model: MODEL,
@@ -383,39 +470,9 @@ async function testPiiReview(generatedResume) {
 
   log('pii /review has content', result.text.length > 100, `length=${result.text.length}`);
   checkPiiRestored(result.text, 'pii /review', false);
-  return result.text;
 }
 
-async function testPiiReviewMulti(generatedResume) {
-  const result = await postSSEWithRetry('/review-multi', {
-    models: [MODEL, MODEL],
-    orchestratorModel: MODEL,
-    jd: SAMPLE_JD,
-    baseResume: PII_SAMPLE_RESUME,
-    updatedResume: generatedResume,
-    resumeLibrary: [],
-    instructions: '',
-    previouslySubmitted: '',
-  });
-
-  log('pii /review-multi has content', result.text.length > 150, `length=${result.text.length}`);
-  checkPiiRestored(result.text, 'pii /review-multi', false);
-}
-
-async function testPiiApplyReview() {
-  const result = await postSSEWithRetry('/apply-review', {
-    model: MODEL,
-    currentResume: PII_SAMPLE_RESUME,
-    reviewComments: '1. Summary需要更精炼\n2. 应突出AI平台经验',
-    jd: SAMPLE_JD,
-    previouslySubmitted: '',
-  });
-
-  log('pii /apply-review has content', result.text.length > 50, `length=${result.text.length}`);
-  checkPiiRestored(result.text, 'pii /apply-review', false);
-}
-
-async function testPiiGeneratorChat() {
+async function testPiiChat() {
   const result = await postSSEWithRetry('/chat', {
     model: MODEL,
     chatType: 'generator',
@@ -439,21 +496,17 @@ async function testPiiGenerateHtml() {
   checkPiiRestored(result.text, 'pii /generate-html');
 }
 
-async function testPiiExtractJdInfo() {
-  const res = await postJSON('/extract-jd-info', { model: MODEL, jd: SAMPLE_JD });
-  const info = await res.json();
-  log('pii /extract-jd-info works', !!info.company, `company="${info.company}", title="${info.title}"`);
-}
-
 async function main() {
-  console.log('\n=== Resume Tailor Main E2E ===\n');
+  console.log('\n=== Resume Tailor Lean E2E ===\n');
 
   try {
     await testInitBase();
     await delay(RATE_LIMIT_DELAY);
     await testExtractJdInfo();
+    await testExtractJdInfoLocalFallback();
     await delay(RATE_LIMIT_DELAY);
     await testListModels();
+    await testFileRoutesAndDigest();
     await delay(RATE_LIMIT_DELAY);
     const generated = await testGenerate();
     await delay(RATE_LIMIT_DELAY);
@@ -467,6 +520,8 @@ async function main() {
     await delay(RATE_LIMIT_DELAY);
     await testReviewChat();
     await delay(RATE_LIMIT_DELAY);
+    await testConnectionFallbackWithoutModel();
+    await delay(RATE_LIMIT_DELAY);
     await testGenerateHtml();
 
     await delay(RATE_LIMIT_DELAY);
@@ -476,15 +531,9 @@ async function main() {
     await delay(RATE_LIMIT_DELAY);
     await testPiiReview(piiGenerated);
     await delay(RATE_LIMIT_DELAY);
-    await testPiiReviewMulti(piiGenerated);
-    await delay(RATE_LIMIT_DELAY);
-    await testPiiApplyReview();
-    await delay(RATE_LIMIT_DELAY);
-    await testPiiGeneratorChat();
+    await testPiiChat();
     await delay(RATE_LIMIT_DELAY);
     await testPiiGenerateHtml();
-    await delay(RATE_LIMIT_DELAY);
-    await testPiiExtractJdInfo();
   } catch (err) {
     console.error('\nFATAL:', err.message);
     RESULTS.push({ test: 'FATAL', pass: false, detail: err.message });

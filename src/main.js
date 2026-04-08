@@ -687,12 +687,11 @@ async function loadLibrary(silent = false) {
   if (!dir) { if (!silent) alert('请输入素材库路径'); return; }
   state.set('libraryPath', dir);
   try {
-    libraryFiles = await api.listFiles(dir);
-    populateBaseResumeSelect();
-    resumeLibraryContents = [];
-    const readableCount = libraryFiles.filter(f => f.readable).length;
+    const files = await api.listFiles(dir);
+    await applyLibraryFiles(files);
+    const readableCount = files.filter(f => f.readable).length;
     if (!silent) {
-      els.resumeStatus.textContent = `已加载 ${libraryFiles.length} 个文件（${readableCount} 个可读取）`;
+      els.resumeStatus.textContent = `已加载 ${files.length} 个文件（${readableCount} 个可读取）`;
     }
   } catch (e) {
     if (!silent) alert('加载失败: ' + e.message);
@@ -724,7 +723,41 @@ function populateBaseResumeSelect() {
       `<option value="${f.name}" ${!f.readable ? 'data-unreadable="1"' : ''}>${f.name} ${!f.readable ? '(需手动粘贴)' : ''}</option>`
     ).join('');
   if (prev) sel.value = prev;
-  onBaseResumeChange();
+}
+
+async function applyLibraryFiles(files) {
+  libraryFiles = files;
+  resumeLibraryContents = [];
+  populateBaseResumeSelect();
+  await onBaseResumeChange();
+}
+
+function hasLibraryMetadataChanged(currentFiles, nextFiles) {
+  if (currentFiles.length !== nextFiles.length) return true;
+  for (let i = 0; i < currentFiles.length; i++) {
+    const current = currentFiles[i];
+    const next = nextFiles[i];
+    if (!current || !next) return true;
+    if (current.name !== next.name) return true;
+    if (current.ext !== next.ext) return true;
+    if (current.size !== next.size) return true;
+    if (current.readable !== next.readable) return true;
+    if (new Date(current.modified).getTime() !== new Date(next.modified).getTime()) return true;
+  }
+  return false;
+}
+
+async function refreshLibraryMetadataIfChanged() {
+  const dir = els.libraryPath.value.trim();
+  if (!dir) return false;
+
+  const latestFiles = await api.listFiles(dir);
+  if (!hasLibraryMetadataChanged(libraryFiles, latestFiles)) {
+    return false;
+  }
+
+  await applyLibraryFiles(latestFiles);
+  return true;
 }
 
 async function onBaseResumeChange() {
@@ -955,8 +988,20 @@ function parseGeneratedOutput(fullText) {
 async function doGenerate() {
   persistInputs();
   const jd = els.jdInput.value.trim();
-  const resume = baseResumeContent || els.manualResumeInput.value.trim();
   if (!jd) return alert('请输入JD');
+
+  try {
+    const libraryChanged = await refreshLibraryMetadataIfChanged();
+    if (libraryChanged) {
+      els.resumeStatus.textContent = '检测到素材库变化，已自动刷新';
+      els.resumeStatus.className = 'status-bar';
+      persistDraftState(true);
+    }
+  } catch (e) {
+    return alert('刷新素材库失败: ' + e.message);
+  }
+
+  const resume = baseResumeContent || els.manualResumeInput.value.trim();
   if (!resume) return alert('请选择或输入基础简历');
 
   isStreaming = true;
