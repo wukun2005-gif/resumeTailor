@@ -316,6 +316,16 @@ async function testFileRoutesAndDigest() {
   log('/library-digest deduplicates shared paragraphs', sharedCount === 1, flattened);
 }
 
+async function testMockJdImageOcr() {
+  const res = await postJSON('/ocr-jd-images', {
+    model: MODEL,
+    mock: true,
+    images: [{ mimeType: 'image/jpeg', data: 'ZmFrZQ==' }],
+  });
+  const data = await res.json();
+  log('/ocr-jd-images mock returns text', data.text?.includes('岗位职责'), JSON.stringify(data));
+}
+
 async function testGenerate() {
   const result = await postSSEWithRetry('/generate', {
     model: MODEL,
@@ -507,6 +517,7 @@ async function main() {
     await delay(RATE_LIMIT_DELAY);
     await testListModels();
     await testFileRoutesAndDigest();
+    await testMockJdImageOcr();
     await delay(RATE_LIMIT_DELAY);
     const generated = await testGenerate();
     await delay(RATE_LIMIT_DELAY);

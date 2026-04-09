@@ -100,6 +100,7 @@ const MOCK = {
   chat: '[仿真测试] 这是模拟回复。关闭仿真模式后将使用真实AI回复。',
   html: '<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:24px 40px;font-size:10.5pt;line-height:1.4;color:#222}h1{text-align:center;font-size:20pt}</style></head><body><h1>吴坤</h1><p>[仿真测试模式] HTML预览</p></body></html>',
   extractJdInfo: '{"company":"Amazon","department":"AGS","title":"Senior Product Manager","language":"en"}',
+  jdOcr: '岗位职责\n1. 参与美团小团Agent的产品功能优化和上线。\n2. 深入洞察用户需求与AI生成式能力。',
 };
 
 function detectJdLanguage(text) {
@@ -458,6 +459,40 @@ router.post('/generate-html', async (req, res) => {
     sendSSE(res, { type: 'error', message: err.message });
   }
   res.end();
+});
+
+router.post('/ocr-jd-images', async (req, res) => {
+  if (req.body.mock) return res.json({ text: MOCK.jdOcr, usage: { input: 0, output: 0 }, model: req.body.model || '' });
+  try {
+    const { model, images } = req.body;
+    if (!Array.isArray(images) || images.length === 0) {
+      return res.status(400).json({ error: '需要提供至少一张 JD 图片' });
+    }
+
+    const caller = getModelCaller(model);
+    const messages = [{
+      role: 'user',
+      content: [
+        ...images.map(img => ({ type: 'file', mimeType: img.mimeType, data: img.data })),
+        {
+          type: 'text',
+          text: `请按图片顺序读取这些招聘JD截图，输出一份干净的纯文本JD。
+
+要求：
+1. 保留职位名称、公司、部门、岗位职责、任职要求等关键信息
+2. 按原顺序合并多张图片的内容
+3. 修复明显的换行断裂和 OCR 断句问题
+4. 不要总结，不要改写，不要补充图片里没有的信息
+5. 只输出最终JD纯文本，不要Markdown，不要解释`,
+        },
+      ],
+    }];
+
+    const result = await caller(null, () => {}, { messages, maxTokens: 4096, temperature: 0.1 });
+    res.json({ text: result.text.trim(), usage: result.usage, model });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Extract JD info (company, dept, title) for file naming

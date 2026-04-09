@@ -39,6 +39,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
 .input-with-btn .status-text { align-self: center; white-space: nowrap; }
 .required { color: #dc2626; }
 .checkbox-group { display: flex; gap: 16px; padding: 4px 0; }
+.jd-upload-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 
 /* ── Collapsible ── */
 .collapsible { margin-bottom: 12px; border: 1px solid #e5e7eb; border-radius: 4px; }
@@ -78,6 +79,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
 /* ── Status ── */
 .status-bar { font-size: 12px; color: #6b7280; margin-top: 6px; min-height: 18px; }
 .same-company-hint { font-size: 12px; color: #92400e; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 4px; padding: 6px 10px; margin-top: 6px; }
+.jd-quality-hint { font-size: 12px; color: #92400e; background: #fff7ed; border: 1px solid #fdba74; border-radius: 4px; padding: 6px 10px; margin-top: 8px; }
 .status-text { font-size: 12px; color: #6b7280; }
 .status-text.success { color: #059669; }
 .status-text.error { color: #dc2626; }

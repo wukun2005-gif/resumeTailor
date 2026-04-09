@@ -108,3 +108,14 @@ export async function getLibraryDigest(dir, excludeNames = []) {
   if (!res.ok) throw new Error(data.error);
   return data;
 }
+
+export async function ocrJdImages(model, images, mock = false) {
+  const res = await fetch('/api/ocr-jd-images', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, images, mock }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'JD 图片 OCR 失败');
+  return data;
+}

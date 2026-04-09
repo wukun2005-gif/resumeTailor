@@ -1,5 +1,6 @@
 import * as state from './state.js';
 import * as api from './api.js';
+import { createWorker } from 'tesseract.js';
 
 /* ── Chat history utilities ── */
 const CHAT_WINDOW_SIZE = 5; // keep seed (2 msgs) + last N rounds (2N msgs)
@@ -59,6 +60,7 @@ const els = {
   cfgAgentOrchestrator: $('cfgAgentOrchestrator'), cfgAgentGenerator: $('cfgAgentGenerator'),
   cfgAgentReviewers: $('cfgAgentReviewers'), cfgAgentHtml: $('cfgAgentHtml'),
   jdInput: $('jdInput'), libraryPath: $('libraryPath'), browseLibraryBtn: $('browseLibraryBtn'), loadLibraryBtn: $('loadLibraryBtn'), baseResumeSelect: $('baseResumeSelect'),
+  jdImageUpload: $('jdImageUpload'), jdImageStatus: $('jdImageStatus'), jdImageAiRetryBtn: $('jdImageAiRetryBtn'), jdImageQualityHint: $('jdImageQualityHint'),
   manualResumeRow: $('manualResumeRow'), manualResumeInput: $('manualResumeInput'),
   genInstructions: $('genInstructions'), htmlInstructions: $('htmlInstructions'), generateCoverLetter: $('generateCoverLetter'),
   generateBtn: $('generateBtn'), outputSection: $('outputSection'),
@@ -93,7 +95,8 @@ let htmlChatMessages = []; // HTML chat context
 let lastHtmlContent = ''; // Last generated HTML for chat context
 let uploadedFileData = null; // { mimeType, data } for PDF/image upload
 let baseResumeCache = new Map(); // key=filename, value={content, modified}
-let draftPersistTimer = null;
+let jdImageLastBatch = null;
+let jdOcrWorkerPromise = null;
 
 /* ── Session Token & Cost Tracking ── */
 let sessionUsage = { totalInput: 0, totalOutput: 0, totalCost: 0 };
@@ -104,78 +107,213 @@ const PRICING = {
   'jiekou-google': { input: 0.075 / 1000000, output: 0.3 / 1000000, note: 'Google' },
 };
 
-function buildDraftState() {
+function getNormalizedJdText(raw = els.jdInput.value) {
+  return String(raw)
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function normalizeOcrText(text) {
+  return String(text || '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function evaluateJdOcrQuality(text) {
+  const normalized = normalizeOcrText(text);
+  const compact = normalized.replace(/\s/g, '');
+  const keywordHits = ['岗位', '职位', '职责', '要求', '任职', '工作内容', '岗位职责', 'Job', 'Responsibilities', 'Requirements']
+    .filter(keyword => normalized.includes(keyword)).length;
+  const suspiciousChars = (normalized.match(/[|_~`]/g) || []).length;
+  const lineCount = normalized.split('\n').filter(Boolean).length;
+  const score = compact.length + keywordHits * 80 - suspiciousChars * 10 + lineCount * 5;
+  const weak = compact.length < 80 || keywordHits === 0 || suspiciousChars > 12;
+
   return {
-    jdInput: els.jdInput.value,
-    manualResumeInput: els.manualResumeInput.value,
-    generateCoverLetter: els.generateCoverLetter.checked,
-    resumeOutput: els.resumeOutput.value,
-    reviewOutput: els.reviewOutput.value,
-    genNotesOutput: els.genNotesOutput.value,
-    genNotesVisible: els.genNotesSection.style.display !== 'none' && !!els.genNotesOutput.value.trim(),
-    genNotesOpen: !!els.genNotesSection.open,
-    resumeStatus: els.resumeStatus.textContent,
-    reviewStatus: els.reviewStatus.textContent,
-    htmlStatus: els.htmlStatus.textContent,
-    savedAt: Date.now(),
+    weak,
+    score,
+    compactLength: compact.length,
+    keywordHits,
   };
 }
 
-function persistDraftState(immediate = false) {
-  const write = () => {
-    draftPersistTimer = null;
-    state.set('draftState', buildDraftState());
-  };
+function setJdImageStatus(text, type = '') {
+  if (!els.jdImageStatus) return;
+  els.jdImageStatus.textContent = text;
+  els.jdImageStatus.className = type ? `status-text ${type}` : 'status-text';
+}
 
-  if (immediate) {
-    if (draftPersistTimer) clearTimeout(draftPersistTimer);
-    write();
+function setJdImageQualityHint(text = '', type = 'warning') {
+  if (!els.jdImageQualityHint) return;
+  if (!text) {
+    els.jdImageQualityHint.style.display = 'none';
+    els.jdImageQualityHint.textContent = '';
     return;
   }
+  els.jdImageQualityHint.textContent = text;
+  els.jdImageQualityHint.style.display = '';
+  els.jdImageQualityHint.className = type === 'error' ? 'jd-quality-hint status-text error' : 'jd-quality-hint';
+}
 
-  if (draftPersistTimer) clearTimeout(draftPersistTimer);
-  draftPersistTimer = setTimeout(write, 150);
+function appendJdText(text) {
+  const normalized = normalizeOcrText(text);
+  if (!normalized) return;
+  const current = getNormalizedJdText();
+  els.jdInput.value = current ? `${current}\n\n${normalized}` : normalized;
+}
+
+function replaceLastAppendedJdText(previousText, nextText) {
+  const previous = normalizeOcrText(previousText);
+  const next = normalizeOcrText(nextText);
+  const current = els.jdInput.value;
+  if (!previous) {
+    appendJdText(next);
+    return false;
+  }
+
+  const index = current.lastIndexOf(previous);
+  if (index === -1) {
+    appendJdText(next);
+    return false;
+  }
+
+  els.jdInput.value = `${current.slice(0, index)}${next}${current.slice(index + previous.length)}`
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return true;
+}
+
+async function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('读取图片失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fileToBase64Payload(file) {
+  const dataUrl = await fileToDataUrl(file);
+  return {
+    name: file.name,
+    mimeType: file.type || 'image/jpeg',
+    data: String(dataUrl).split(',')[1],
+  };
+}
+
+async function loadImageFromFile(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error(`无法读取图片: ${file.name}`));
+      el.src = url;
+    });
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function preprocessJdImage(file) {
+  const img = await loadImageFromFile(file);
+  const maxDim = 2200;
+  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+  const width = Math.max(1, Math.round(img.width * scale));
+  const height = Math.max(1, Math.round(img.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, width, height);
+
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+    total += gray;
+  }
+  const threshold = Math.max(135, Math.min(205, total / (data.length / 4) + 10));
+
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+    const contrasted = gray > threshold ? 255 : 0;
+    data[i] = contrasted;
+    data[i + 1] = contrasted;
+    data[i + 2] = contrasted;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+async function getJdOcrWorker(logger) {
+  if (!jdOcrWorkerPromise) {
+    jdOcrWorkerPromise = createWorker('chi_sim+eng', 1, {
+      logger,
+    });
+  }
+  return jdOcrWorkerPromise;
+}
+
+function persistDraftState() {}
+
+function clearWorkspaceState() {
+  state.set('draftState', null);
+  state.set('baseResume', '');
+
+  els.jdInput.value = '';
+  els.manualResumeInput.value = '';
+  els.generateCoverLetter.checked = false;
+  els.resumeOutput.value = '';
+  els.reviewOutput.value = '';
+  els.genNotesOutput.value = '';
+  els.chatInput.value = '';
+  els.genChatInput.value = '';
+  els.htmlChatInput.value = '';
+
+  els.manualResumeRow.style.display = 'none';
+  els.genNotesSection.style.display = 'none';
+  els.genNotesSection.open = false;
+  els.htmlChatSection.style.display = 'none';
+  els.saveFilenameRow.style.display = 'none';
+
+  els.resumeStatus.textContent = '';
+  els.reviewStatus.textContent = '';
+  els.htmlStatus.textContent = '';
+  els.resumeTokenInfo.textContent = '';
+  els.reviewTokenInfo.textContent = '';
+  els.htmlTokenInfo.textContent = '';
+  els.sessionTotalInfo.textContent = '';
+  els.htmlUploadStatus.textContent = '';
+
+  setJdImageStatus('');
+  setJdImageQualityHint('');
+  updateJdAiRetryVisibility(false);
+  hideSameCompanyHint();
+
+  els.chatHistory.innerHTML = '';
+  els.genChatHistory.innerHTML = '';
+  els.htmlChatHistory.innerHTML = '';
+
+  if (els.jdImageUpload) els.jdImageUpload.value = '';
+  if (els.htmlPdfUpload) els.htmlPdfUpload.value = '';
+
+  chatMessages = [];
+  genChatMessages = [];
+  htmlChatMessages = [];
+  lastHtmlContent = '';
+  uploadedFileData = null;
+  baseResumeContent = '';
+  jdInfo = null;
+  jdImageLastBatch = null;
+  sessionUsage = { totalInput: 0, totalOutput: 0, totalCost: 0 };
 }
 
 function restoreDraftState() {
-  const draft = state.get('draftState', null);
-  if (!draft || typeof draft !== 'object') return;
-
-  if (typeof draft.jdInput === 'string') els.jdInput.value = draft.jdInput;
-  if (typeof draft.manualResumeInput === 'string') els.manualResumeInput.value = draft.manualResumeInput;
-  if (typeof draft.generateCoverLetter === 'boolean') els.generateCoverLetter.checked = draft.generateCoverLetter;
-  if (typeof draft.resumeOutput === 'string') els.resumeOutput.value = draft.resumeOutput;
-  if (typeof draft.reviewOutput === 'string') els.reviewOutput.value = draft.reviewOutput;
-  if (typeof draft.genNotesOutput === 'string') els.genNotesOutput.value = draft.genNotesOutput;
-  if (draft.genNotesVisible) {
-    els.genNotesSection.style.display = '';
-    els.genNotesSection.open = !!draft.genNotesOpen;
-  }
-
-  const hadRestoredWork = !!(
-    (draft.jdInput || '').trim()
-    || (draft.manualResumeInput || '').trim()
-    || (draft.resumeOutput || '').trim()
-    || (draft.reviewOutput || '').trim()
-    || (draft.genNotesOutput || '').trim()
-  );
-
-  if (hadRestoredWork) {
-    if ((draft.resumeOutput || '').trim()) {
-      els.resumeStatus.textContent = '已恢复本地草稿（页面曾刷新）';
-    }
-    if ((draft.reviewOutput || '').trim()) {
-      els.reviewStatus.textContent = '已恢复本地草稿（页面曾刷新）';
-    }
-    if (!(draft.resumeOutput || '').trim() && !(draft.reviewOutput || '').trim()) {
-      els.resumeStatus.textContent = '已恢复本地草稿（页面曾刷新）';
-    }
-  } else {
-    if (typeof draft.resumeStatus === 'string') els.resumeStatus.textContent = draft.resumeStatus;
-    if (typeof draft.reviewStatus === 'string') els.reviewStatus.textContent = draft.reviewStatus;
-  }
-
-  if (typeof draft.htmlStatus === 'string') els.htmlStatus.textContent = draft.htmlStatus;
+  clearWorkspaceState();
 }
 
 /* ── Model Connection Definitions ── */
@@ -242,11 +380,6 @@ function resolveReviewerConnectionIds(currentValues = [], savedValues = [], defa
 }
 
 function applyResolvedAgentSelections(overrides = {}) {
-  const orchestratorModel = resolveSingleConnectionId(
-    overrides.orchestratorValue ?? els.cfgAgentOrchestrator.value,
-    state.get('orchestratorModel', 'jiekou-anthropic'),
-    'jiekou-anthropic',
-  );
   const generatorModel = resolveSingleConnectionId(
     overrides.generatorValue ?? els.cfgAgentGenerator.value,
     state.get('generatorModel', 'jiekou-anthropic'),
@@ -263,20 +396,19 @@ function applyResolvedAgentSelections(overrides = {}) {
     'google-studio-google',
   );
 
-  els.cfgAgentOrchestrator.value = orchestratorModel;
+  if (els.cfgAgentOrchestrator) els.cfgAgentOrchestrator.value = generatorModel;
   els.cfgAgentGenerator.value = generatorModel;
   els.cfgAgentHtml.value = htmlModel;
   for (const cb of els.cfgAgentReviewers.querySelectorAll('input[type="checkbox"]')) {
     cb.checked = reviewerModels.includes(cb.value);
   }
 
-  return { orchestratorModel, generatorModel, htmlModel, reviewerModels };
+  return { generatorModel, htmlModel, reviewerModels };
 }
 
 function populateAgentDropdowns() {
   const configured = getConfiguredConnections();
   const prevSelections = {
-    orchestratorValue: els.cfgAgentOrchestrator.value,
     generatorValue: els.cfgAgentGenerator.value,
     htmlValue: els.cfgAgentHtml.value,
     reviewerValues: getSelectedReviewers(),
@@ -286,7 +418,7 @@ function populateAgentDropdowns() {
   ).join('');
   const emptyOption = '<option value="">— 未配置 —</option>';
 
-  for (const sel of [els.cfgAgentOrchestrator, els.cfgAgentGenerator, els.cfgAgentHtml]) {
+  for (const sel of [els.cfgAgentOrchestrator, els.cfgAgentGenerator, els.cfgAgentHtml].filter(Boolean)) {
     sel.innerHTML = emptyOption + options;
   }
 
@@ -295,10 +427,6 @@ function populateAgentDropdowns() {
   ).join('');
 
   return applyResolvedAgentSelections(prevSelections);
-}
-
-function getOrchestratorModelId() {
-  return resolveSingleConnectionId(els.cfgAgentOrchestrator.value, state.get('orchestratorModel', 'jiekou-anthropic'), 'jiekou-anthropic');
 }
 
 function getGeneratorModelId() {
@@ -311,6 +439,15 @@ function getHtmlModelId() {
 
 function getReviewerModelIds() {
   return resolveReviewerConnectionIds(getSelectedReviewers(), state.get('reviewerModels', ['google-studio-google']), 'google-studio-google');
+}
+
+function getJdAnalysisModelId() {
+  return getGeneratorModelId();
+}
+
+function getReviewCoordinatorModelId() {
+  const reviewers = getReviewerModelIds();
+  return reviewers[0] || getGeneratorModelId();
 }
 
 function requireConfiguredConnection(connectionId, roleLabel) {
@@ -547,6 +684,8 @@ function bindEvents() {
   els.baseResumeSelect.addEventListener('change', onBaseResumeChange);
   els.generateBtn.addEventListener('click', doGenerate);
   els.regenerateBtn.addEventListener('click', doGenerate);
+  els.jdImageUpload.addEventListener('change', handleJdImageUpload);
+  els.jdImageAiRetryBtn.addEventListener('click', retryJdImageWithAi);
   els.saveResumeBtn.addEventListener('click', showSaveDialog);
   els.confirmSaveBtn.addEventListener('click', doSave);
   els.cancelSaveBtn.addEventListener('click', () => { els.saveFilenameRow.style.display = 'none'; });
@@ -597,7 +736,7 @@ function onResumeEdited() {
 }
 
 function updateGenerateBtn() {
-  const hasJD = els.jdInput.value.trim().length > 0;
+  const hasJD = getNormalizedJdText().length > 0;
   const hasGenerator = !!getGeneratorModelId();
   const hasHtml = !!getHtmlModelId();
   const hasReviewer = getReviewerModelIds().length > 0;
@@ -640,7 +779,7 @@ async function saveSettings() {
   }
 
   const assignments = populateAgentDropdowns();
-  state.set('orchestratorModel', assignments.orchestratorModel);
+  state.set('orchestratorModel', '');
   state.set('generatorModel', assignments.generatorModel);
   state.set('reviewerModels', assignments.reviewerModels);
   state.set('htmlModel', assignments.htmlModel);
@@ -678,6 +817,112 @@ async function saveSettings() {
   } catch (e) {
     els.settingsStatus.textContent = '连接失败: ' + e.message;
     els.settingsStatus.className = 'status-text error';
+  }
+}
+
+function canUseAiJdOcr() {
+  if (els.mockMode.checked) return true;
+  return !!getHtmlModelId();
+}
+
+function updateJdAiRetryVisibility(show) {
+  if (!els.jdImageAiRetryBtn) return;
+  els.jdImageAiRetryBtn.style.display = show ? '' : 'none';
+  els.jdImageAiRetryBtn.disabled = !show;
+}
+
+async function handleJdImageUpload(e) {
+  const files = [...(e.target.files || [])].filter(file => file.type.startsWith('image/'));
+  els.jdImageUpload.value = '';
+  if (!files.length) return;
+
+  jdImageLastBatch = { files, localText: '', appliedText: '', quality: null, aiUsed: false };
+  updateJdAiRetryVisibility(false);
+  setJdImageQualityHint('');
+  setJdImageStatus(`准备识别 ${files.length} 张 JD 图片...`);
+
+  try {
+    const worker = await getJdOcrWorker(msg => {
+      if (msg.status === 'recognizing text') {
+        setJdImageStatus(`图片 OCR 中... ${Math.round((msg.progress || 0) * 100)}%`);
+      } else if (msg.status === 'loading language traineddata') {
+        setJdImageStatus('首次识别，正在下载本地 OCR 语言包...');
+      }
+    });
+
+    const sections = [];
+    for (let i = 0; i < files.length; i++) {
+      setJdImageStatus(`正在识别第 ${i + 1}/${files.length} 张图片...`);
+      const canvas = await preprocessJdImage(files[i]);
+      const { data } = await worker.recognize(canvas, { rotateAuto: true });
+      const text = normalizeOcrText(data.text);
+      if (text) sections.push(text);
+    }
+
+    const merged = sections.join('\n\n');
+    jdImageLastBatch.localText = merged;
+    jdImageLastBatch.appliedText = merged;
+    jdImageLastBatch.quality = evaluateJdOcrQuality(merged);
+
+    if (merged) appendJdText(merged);
+    jdInfo = null;
+    updateGenerateBtn();
+    persistDraftState(true);
+
+    if (!merged) {
+      const canRetry = canUseAiJdOcr();
+      setJdImageStatus(`未能从 ${files.length} 张图片识别出有效 JD 文本`, 'error');
+      setJdImageQualityHint(canRetry
+        ? '本地 OCR 没有提取到可用内容，可点击“用 AI 改进识别”，或手动补充 JD 文本。'
+        : '本地 OCR 没有提取到可用内容。当前未配置 Format Converter，暂时不能使用 AI OCR 兜底。', 'error');
+      updateJdAiRetryVisibility(canRetry);
+      return;
+    }
+
+    setJdImageStatus(`已从 ${files.length} 张图片提取 JD 文本，并追加到输入框`, 'success');
+    if (jdImageLastBatch.quality.weak) {
+      const canRetry = canUseAiJdOcr();
+      setJdImageQualityHint(canRetry
+        ? '本地 OCR 结果可能不完整，建议先手动检查；如仍不理想，可点击“用 AI 改进识别”。'
+        : '本地 OCR 结果可能不完整。当前未配置 Format Converter，暂时不能使用 AI OCR 兜底，请先检查或手动修正 JD 文本。');
+      updateJdAiRetryVisibility(canRetry);
+    } else {
+      setJdImageQualityHint('本地 OCR 结果质量较好，建议快速检查后直接使用。');
+    }
+  } catch (err) {
+    setJdImageStatus(`图片识别失败: ${err.message}`, 'error');
+    setJdImageQualityHint('本地 OCR 未完成。你可以重新上传图片，或在配置好 Format Converter 后尝试“用 AI 改进识别”。', 'error');
+    updateJdAiRetryVisibility(canUseAiJdOcr());
+  }
+}
+
+async function retryJdImageWithAi() {
+  if (!jdImageLastBatch?.files?.length || isStreaming) return;
+  try {
+    const model = requireConfiguredConnection(getHtmlModelId(), 'Format Converter');
+    els.jdImageAiRetryBtn.disabled = true;
+    setJdImageStatus('正在用 AI 改进图片识别结果...');
+    const images = await Promise.all(jdImageLastBatch.files.map(fileToBase64Payload));
+    const result = await api.ocrJdImages(model, images, els.mockMode.checked);
+    const text = normalizeOcrText(result.text);
+    if (!text) throw new Error('AI 未返回有效 JD 文本');
+
+    const replaced = replaceLastAppendedJdText(jdImageLastBatch.appliedText, text);
+    jdImageLastBatch.appliedText = text;
+    jdImageLastBatch.aiUsed = true;
+    jdImageLastBatch.quality = evaluateJdOcrQuality(text);
+    jdInfo = null;
+    updateGenerateBtn();
+    persistDraftState(true);
+
+    updateJdAiRetryVisibility(false);
+    setJdImageStatus(replaced ? 'AI 已改进最新一批 JD 图片识别结果' : 'AI 已改进识别结果，并追加到 JD 输入框末尾', 'success');
+    setJdImageQualityHint('已使用 Format Converter 进行 AI OCR 兜底；后续生成/评审仍只使用 JD 文本，不会重复发送图片。');
+  } catch (err) {
+    setJdImageStatus(`AI 改进失败: ${err.message}`, 'error');
+    setJdImageQualityHint('AI OCR 兜底失败，请手动修正 JD 文本后继续。', 'error');
+  } finally {
+    els.jdImageAiRetryBtn.disabled = false;
   }
 }
 
@@ -860,7 +1105,7 @@ function tryLocalJdParse(jdText) {
 
 async function extractJdInfo() {
   if (jdInfo) return jdInfo;
-  const jd = els.jdInput.value.trim();
+  const jd = getNormalizedJdText();
   if (!jd) return { company: '', department: '', title: '', language: 'en' };
 
   // Try local parsing first (saves ~1600 tokens)
@@ -871,7 +1116,7 @@ async function extractJdInfo() {
   }
 
   try {
-    const model = getOrchestratorModelId();
+    const model = getJdAnalysisModelId();
     if (!model && !els.mockMode.checked) return { company: '', department: '', title: '', language: 'en' };
     const res = await fetch('/api/extract-jd-info', {
       method: 'POST',
@@ -987,7 +1232,7 @@ function parseGeneratedOutput(fullText) {
 /* ── Generate Resume ── */
 async function doGenerate() {
   persistInputs();
-  const jd = els.jdInput.value.trim();
+  const jd = getNormalizedJdText();
   if (!jd) return alert('请输入JD');
 
   try {
@@ -1192,7 +1437,7 @@ async function doReview() {
     }
     const reviewPayload = {
       mock,
-      jd: els.jdInput.value,
+      jd: getNormalizedJdText(),
       baseResume: baseResumeContent || els.manualResumeInput.value,
       updatedResume: resume,
       resumeLibrary: library,
@@ -1206,7 +1451,7 @@ async function doReview() {
       result = await api.streamRequest('/api/review-multi', {
         ...reviewPayload,
         models: reviewerModels,
-        orchestratorModel: requireConfiguredConnection(getOrchestratorModelId(), 'Orchestrator'),
+        orchestratorModel: requireConfiguredConnection(getReviewCoordinatorModelId(), 'Reviewer'),
       }, (chunk, full) => {
         els.reviewOutput.value = full;
         els.reviewOutput.scrollTop = els.reviewOutput.scrollHeight;
@@ -1225,7 +1470,7 @@ async function doReview() {
     }
 
     chatMessages = [
-      { role: 'user', content: `请对以下简历进行评审：\n\nJD:\n${els.jdInput.value}\n\n简历:\n${resume}` },
+      { role: 'user', content: `请对以下简历进行评审：\n\nJD:\n${getNormalizedJdText()}\n\n简历:\n${resume}` },
       { role: 'assistant', content: result.text || result },
     ];
 
@@ -1361,7 +1606,7 @@ async function doApplyReview() {
       model, mock,
       currentResume,
       reviewComments,
-      jd: els.jdInput.value,
+      jd: getNormalizedJdText(),
       previouslySubmitted,
     }, (chunk, full) => {
       els.resumeOutput.value = full;
@@ -1415,7 +1660,7 @@ async function doApplyReview() {
 
       const rawOutput = await api.streamRequest('/api/generate', {
         model, mock,
-        jd: els.jdInput.value,
+        jd: getNormalizedJdText(),
         baseResume: currentResume,
         resumeLibrary: library,
         instructions,
@@ -1452,7 +1697,7 @@ async function doApplyReview() {
     // Update genChat context with the new resume
     const updatedResume = els.resumeOutput.value;
     genChatMessages = [
-      { role: 'user', content: `请根据JD和简历素材生成简历。\n\nJD:\n${els.jdInput.value}\n\n基础简历:\n${currentResume}` },
+      { role: 'user', content: `请根据JD和简历素材生成简历。\n\nJD:\n${getNormalizedJdText()}\n\n基础简历:\n${currentResume}` },
       { role: 'assistant', content: updatedResume },
     ];
   } catch (e) {
@@ -1545,7 +1790,7 @@ async function doChat() {
   aiDiv.classList.add('loading');
 
   try {
-    const model = requireConfiguredConnection(getOrchestratorModelId(), 'Orchestrator');
+    const model = requireConfiguredConnection(getReviewCoordinatorModelId(), 'Reviewer');
     const result = await api.streamRequest('/api/chat', {
       model, mock: els.mockMode.checked,
       messages: truncateHistory(chatMessages),
@@ -1601,7 +1846,7 @@ async function doGenerateHtml() {
 
   let htmlContent = '';
   try {
-    const model = requireConfiguredConnection(getHtmlModelId(), 'HTML Converter');
+    const model = requireConfiguredConnection(getHtmlModelId(), 'Format Converter');
     let result = await api.streamRequest('/api/generate-html', {
       model, mock: els.mockMode.checked,
       resumeText: resume,
@@ -1718,7 +1963,7 @@ async function doHtmlChat() {
   aiDiv.classList.add('loading');
 
   try {
-    const model = requireConfiguredConnection(getHtmlModelId(), 'HTML Converter');
+    const model = requireConfiguredConnection(getHtmlModelId(), 'Format Converter');
     const result = await api.streamRequest('/api/chat', {
       model, mock: els.mockMode.checked,
       messages: truncateHistory(htmlChatMessages),

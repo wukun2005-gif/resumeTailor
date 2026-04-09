@@ -123,10 +123,14 @@ vscCCOpus/
 
 | Agent | 作用 | 选择方式 | 默认 |
 |---|---|---|---|
-| Orchestrator | 对话/协调/JD解析 | 单选下拉 | `jiekou-anthropic` |
 | Generator | 简历/求职信生成 | 单选下拉 | `jiekou-anthropic` |
 | Reviewer | 简历评审 | 多选复选框 | `google-studio-google` |
-| HTML Converter | txt→HTML 转换 | 单选下拉 | `google-studio-google` |
+| Format Converter | HTML 转换；在本地 OCR 质量差时作为 JD 图片 OCR 的 AI 兜底 | 单选下拉 | `google-studio-google` |
+
+补充说明：
+- `Orchestrator` 不再作为用户可配置角色出现在“设置”里
+- JD 解析的 AI 兜底默认复用 `Generator`
+- `review-multi` 的合并与 Review 对话默认复用首个 `Reviewer`；若没有 Reviewer，则回退到 `Generator`
 
 ### 4.2 SDK 路由逻辑 (`getSdkType()`)
 
@@ -171,6 +175,7 @@ connectionId === 'jiekou-anthropic'      → Anthropic SDK (anthropic.js)
 | POST | `/apply-review` | 根据评审意见 diff 修改简历 | SSE |
 | POST | `/generate-html` | 生成 HTML | SSE |
 | POST | `/extract-jd-info` | 从 JD 提取公司/部门/职位 | No |
+| POST | `/ocr-jd-images` | JD 图片 OCR 的 AI 兜底（仅用户主动触发） | No |
 
 ### `/init` 请求格式（新格式）
 ```json
@@ -222,15 +227,17 @@ data: {"type":"done"}
 | `connKey_*` | 每个连接的 API Key | 是 |
 | `connUrl_*` | 每个连接的 URL | 否 |
 | `connModel_*` | 每个连接的 Model ID | 否 |
-| `orchestratorModel` | Orchestrator Agent 对应的 connection ID | 否 |
 | `generatorModel` | Generator Agent 对应的 connection ID | 否 |
 | `reviewerModels` | Reviewer Agent 的 connection ID 数组 | 否 |
-| `htmlModel` | HTML Converter 的 connection ID | 否 |
+| `htmlModel` | Format Converter 的 connection ID | 否 |
 | `libraryPath` | 简历素材库绝对路径 | 否 |
 | `genInstructions` | 生成简历的 prompt 指令 | 否 |
 | `htmlInstructions` | HTML 转换的 prompt 指令 | 否 |
-| `baseResume` | 上次选择的基础简历文件名 | 否 |
 | `mockMode` | 仿真模式开关 | 否 |
+
+### 6.3 工作区内容默认不持久化
+
+当前版本进入应用时会自动清空工作区，不恢复上一次的 JD、生成结果、Review、聊天记录和 OCR 中间结果。保留的只有“设置层”信息，例如 API 连接、Agent 分配、素材库路径、指令和 PII 配置。
 
 ---
 
@@ -246,7 +253,7 @@ data: {"type":"done"}
 - 评审要点：事实一致性、篇幅、关键词堆砌、深度、诚实度、数字一致性
 
 ### 7.3 `getReviewMergePrompt`
-- 用于多 Reviewer 场景：多个模型并行评审后，由 Orchestrator 模型合并评审意见
+- 用于多 Reviewer 场景：多个模型并行评审后，由内部编排层默认复用首个 Reviewer 模型合并评审意见
 - 使用实际的 connection label 标识各评审员
 
 ### 7.4 `getHtmlGenerationPrompt`
@@ -307,6 +314,38 @@ data: {"type":"done"}
 - 评审维度追加「跨投递一致性检查」：核查事实层是否与历史投递矛盾
 - 评审输出格式追加专门的「跨投递一致性」评审小节
 
+### 7.6 JD 图片输入与 OCR 策略
+
+新增能力：JD 不再只支持用户粘贴的纯文本，也支持上传 `1..N` 张职位截图图片（常见为社交媒体平台导出的 `JPG` / `PNG` / `WebP`）。
+
+设计原则：
+
+- **默认本地 OCR**：图片先在浏览器端做预处理和 OCR，不消耗 AI token
+- **文本仍是唯一真源**：OCR 结果被追加写入 `jdInput`，后续 `/extract-jd-info`、`/generate`、`/review`、`/apply-review` 等全部继续只消费 JD 文本
+- **AI 仅做兜底**：当本地 OCR 质量差，且用户主动点击“用 AI 改进识别”时，才调用 `Format Converter` 执行一次性 AI OCR 兜底
+
+前端流程：
+
+1. 用户选择多张 JD 图片
+2. 前端按上传顺序逐张预处理（缩放、灰度/二值化）
+3. 使用浏览器端 OCR 提取文本
+4. 将净化后的 JD 纯文本**追加**到 `jdInput`
+5. 本地质量检查：
+   - 文本长度
+   - JD 关键词命中（职责 / 要求 / 任职等）
+   - 异常字符比例
+6. 质量差时显示提示；若已配置 `Format Converter`，展示“用 AI 改进识别”按钮
+
+AI 兜底：
+
+- 路由：`POST /api/ocr-jd-images`
+- Agent：复用 `Format Converter`
+- 输入：图片数组
+- 输出：整理后的 JD 纯文本
+- 只在用户主动触发时调用一次；生成、评审等主流程不会重复发送这些图片
+
+JD 输入框中只保留最终的 JD 纯文本，不写入批次号、图片文件名或其他技术分隔符，因此不会额外污染 prompt，也不会为这些辅助标记消耗 token。
+
 ---
 
 ## 8. UI 布局
@@ -316,7 +355,7 @@ data: {"type":"done"}
 │  Header: [简历定制助手]  [仿真模式] [设置]    │
 ├─────────────────────────────────────────────┤
 │  输入区                                      │
-│  ├ JD 输入框                                 │
+│  ├ JD 输入框 + JD图片上传 / OCR状态           │
 │  ├ 素材库路径 + 浏览/加载按钮                   │
 │  ├ 基础简历下拉选择                             │
 │  ├ 手动输入简历（按需显示）                      │
@@ -343,7 +382,7 @@ data: {"type":"done"}
 ### 设置弹窗
 - 宽度 820px (`.modal-wide`)
 - **模型连接配置**：3 个可折叠的供应商区块，每块一个表格（模型类型 / URL / Key / Model ID）
-- **Agent 模型分配**：4 个选择器，从已配置连接中动态生成选项
+- **Agent 模型分配**：3 个选择器（Generator / Reviewer / Format Converter），从已配置连接中动态生成选项
 - 动态更新：用户在连接表中填入 API Key 后，Agent 分配区的下拉选项即时刷新
 
 ---
@@ -354,7 +393,7 @@ data: {"type":"done"}
 `wukun - {type} - {company} - {department} - {title} - {YYYY-MM-DD}.{ext}`
 
 - `type`：`resume`
-- 公司/部门/职位由 Orchestrator 从 JD 中提取（`/extract-jd-info`）
+- 公司/部门/职位由内部 JD 解析流程从文本 JD 中提取（先本地规则，再由 `Generator` 做 AI 兜底）；若 JD 最初来自图片，也会先在前端 OCR 成文本
 - 中文 JD 对应中文文件名，英文 JD 对应英文文件名
 - 如果提取不到公司名，仅在手动保存时询问用户
 
@@ -381,6 +420,7 @@ Mock 数据包含：
 - `chat`：模拟聊天回复
 - `html`：模拟 HTML 输出
 - `extractJdInfo`：模拟 JD 解析结果
+- `jdOcr`：模拟 JD 图片 OCR 兜底结果
 
 ---
 
@@ -456,7 +496,7 @@ Mock 数据包含：
 1. 本地集成测试
    - 默认优先
    - 不调用真实 AI
-   - 适合前端状态、素材库、文件读写、`.pages` fallback、草稿恢复、模型查询 UI 等
+   - 适合前端状态、素材库、文件读写、`.pages` fallback、工作区清空、模型查询 UI 等
 2. 定向真实 AI 测试
    - 仅在改动直接影响 AI 调用链时执行
    - 一次只测本次改动影响的那一两条 AI 路径
@@ -478,7 +518,7 @@ Mock 数据包含：
 
 - 纯 UI 文案或样式
 - 展开/收起、按钮状态、提示文案
-- 草稿恢复
+- 工作区清空
 - 文件读取、素材库元数据、`.pages` 手动粘贴 fallback
 - 其他纯本地逻辑
 
@@ -487,7 +527,7 @@ Mock 数据包含：
 - `npm run build` 仍然是所有源码修改后的基础检查
 - `test-e2e.mjs` 保留为一个可复用的综合回归脚本，但不再要求每次都全量执行
 - 若需要真实 AI 回归，建议使用独立端口启动一份测试后端，并仅执行与改动相关的最小路径
-- `npm run dev` 使用 Vite 热更新；只要工作区内的前端源码被修改，浏览器就可能整页 reload。当前版本已为 JD、手动简历、生成结果、Review 结果和 AI 备注做本地草稿恢复，但正在进行中的流式请求仍会被中断
+- `npm run dev` 使用 Vite 热更新；只要工作区内的前端源码被修改，浏览器就可能整页 reload。当前版本不做工作草稿自动恢复，开发时请避免把正式操作放在会触发热更新的会话里
 
 ### 添加新的模型供应商
 1. 如果是 OpenAI 兼容 API：无需改后端，只需在 `index.html` 添加表格行 + `main.js` 的 `MODEL_CONNECTIONS` 添加条目
@@ -508,7 +548,7 @@ Mock 数据包含：
 
 - 一站式完成简历生成 → 评审 → 修改 → HTML 导出
 - 支持 Opus 4.6（付费 Jiekou.ai 代理）和 Gemini（免费 Google AI Studio / 付费代理）
-- 多 Agent 协作：Orchestrator / Generator / Reviewer / HTML Converter
+- 多 Agent 协作：Generator / Reviewer / Format Converter + 内部编排逻辑
 - 简历素材库路径直接读取，不要求用户上传文件
 - 生成的文件自动保存到素材库，AI 根据 JD 自动命名
 - HTML 导出后用户自行在浏览器打印 PDF
@@ -525,6 +565,62 @@ Mock 数据包含：
 ---
 
 ## Change Log
+
+### 2026-04-09 — 工作区自动清空 + Orchestrator 内部化 + JD OCR 纯文本化
+
+**概述**：收紧前一版的交互设计，去掉过度工程化的状态恢复和显式 Orchestrator 配置。进入应用时工作区自动清空；设置里只保留 3 个可配置 Agent；JD 图片 OCR 结果只把最终纯文本写入 JD 输入框，不再插入任何批次/文件名分隔符。
+
+**实现要点**：
+
+- `src/main.js`
+  - `restoreDraftState()` 改为启动即清空工作区，不再恢复旧草稿
+  - `persistDraftState()` 退化为空实现，工作内容不再跨启动保存
+  - JD 解析默认复用 `Generator`；`review-multi` 合并和 Review 对话默认复用首个 `Reviewer`
+  - JD 图片上传后的本地 OCR 和 AI OCR 兜底结果，都只向 `jdInput` 追加/替换净化后的纯文本
+- `index.html`：设置中隐藏 `Orchestrator` 下拉，仅保留 `Generator / Reviewer / Format Converter`
+- `README.md` / `DESIGN.md`：同步更新产品结构、状态策略和当前职责边界
+
+**测试**：
+
+- `node --check src/main.js`
+- `node --check server/routes/api.js`
+- `node --check test-e2e.mjs`
+- `npm run build`
+
+### 2026-04-08 — 图片 JD 输入 + 本地 OCR + Format Converter 兜底
+
+**概述**：新增图片型 JD 输入能力。用户除了粘贴文本 JD，还可以上传 1..N 张社交媒体平台导出的职位截图或普通 `JPG/PNG/WebP` 图片。系统默认先在浏览器端做图片预处理和本地 OCR，把结果追加写入 JD 输入框；只有当本地 OCR 质量差且用户主动触发时，才调用 `Format Converter` 做一次性 AI OCR 兜底，从而尽量把图片 JD 的 token 消耗压到最低。
+
+**实现要点**：
+
+- `index.html`：JD 区新增“上传 JD 图片”、“用 AI 改进识别”、OCR 状态和质量提示
+- `src/main.js`：
+  - 接入浏览器端 `tesseract.js` 本地 OCR
+  - 图片预处理（缩放、灰度/二值化）
+  - 多图按顺序识别并**追加**到现有 JD 文本后面
+  - 新增 OCR 质量检测，决定是否展示 AI OCR 兜底入口
+  - `Format Converter` 角色文案改名，不再局限于“HTML Converter”
+- `server/routes/api.js`：新增 `POST /api/ocr-jd-images`，复用 `Format Converter` 模型做一次性 AI OCR 兜底；mock 模式同步支持
+- `test-e2e.mjs`：新增 `/ocr-jd-images` mock 回归
+
+**测试**：
+
+- `node --check server/routes/api.js`：通过
+- `node --check src/main.js`：通过
+- `node --check test-e2e.mjs`：通过
+- `npm run build`：通过
+- `curl http://localhost:3003/api/ocr-jd-images`（mock 路由）验证：通过
+
+**改动文件**：
+
+- `index.html`
+- `src/style.css`
+- `src/api.js`
+- `src/main.js`
+- `server/routes/api.js`
+- `test-e2e.mjs`
+- `README.md`
+- `DESIGN.md`
 
 ### 2026-04-08 — Dev Reload 草稿恢复
 
