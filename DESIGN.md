@@ -566,6 +566,23 @@ Mock 数据包含：
 
 ## Change Log
 
+### 2026-04-09 — Orchestrator 透明化 + 极客级原生打印接入 + 深度回归修复 (by Antigravity)
+
+**概述**：
+- **Orchestrator 透明化**：取消模型选项黑盒化，向用户显式提供性价比排序机制，优先推荐免费 Gemini 以节约成本。
+- **原生 PDF 打印**：注入隐藏 `iframe` 并执行 `window.print()`，直接唤起系统原生的 PDF 打印弹窗。
+
+**回归修复专项 (Regression Fixes)**：
+- **内容保真红线**：禁绝 AI 在 HTML 排版中改写原文，确保 100% 还原。
+- **文件名动态劫持**：通过临时修改 `document.title`，强制引导打印对话框使用规范文件名。
+- **PII HTML 转义兼容**：自动还原被转义为 `&lt;&lt;NAME&gt;&gt;` 的占位符。
+- **UI 语义修正**：更正按钮文本为“生成排版并保存为PDF”。
+
+**修改文件**：
+- `index.html` — `#cfgAgentOrchestrator` 解除隐藏；修正生成按钮文案。
+- `src/main.js` — 升级 `doGenerateHtml` 增加 `document.title` 劫持；调整状态恢复逻辑。
+- `server/services/piiSanitizer.js` / `server/prompts/templates.js` / `server/routes/api.js` 等深度重构。
+
 ### 2026-04-09 — 工作区自动清空 + Orchestrator 内部化 + JD OCR 纯文本化
 
 **概述**：收紧前一版的交互设计，去掉过度工程化的状态恢复和显式 Orchestrator 配置。进入应用时工作区自动清空；设置里只保留 3 个可配置 Agent；JD 图片 OCR 结果只把最终纯文本写入 JD 输入框，不再插入任何批次/文件名分隔符。
