@@ -56,7 +56,7 @@
 
 ### 启动方式
 ```bash
-cd /Users/wukun/Documents/tmp/resumeTailor/vscCCOpus
+cd resumeTailor
 npm run dev
 # 浏览器打开 http://localhost:5173
 ```
