@@ -128,7 +128,7 @@ vscCCOpus/
 | Format Converter | HTML 转换；在本地 OCR 质量差时作为 JD 图片 OCR 的 AI 兜底 | 单选下拉 | `google-studio-google` |
 
 补充说明：
-- `Orchestrator` 不再作为用户可配置角色出现在“设置”里
+- `Orchestrator` 作为可配置角色在“设置”中可见；用于 JD 解析及评审合并协调
 - JD 解析的 AI 兜底默认复用 `Generator`
 - `review-multi` 的合并与 Review 对话默认复用首个 `Reviewer`；若没有 Reviewer，则回退到 `Generator`
 
@@ -528,6 +528,15 @@ Mock 数据包含：
 - `test-e2e.mjs` 保留为一个可复用的综合回归脚本，但不再要求每次都全量执行
 - 若需要真实 AI 回归，建议使用独立端口启动一份测试后端，并仅执行与改动相关的最小路径
 - `npm run dev` 使用 Vite 热更新；只要工作区内的前端源码被修改，浏览器就可能整页 reload。当前版本不做工作草稿自动恢复，开发时请避免把正式操作放在会触发热更新的会话里
+
+### 14.1 HTML 打印链路最小冒烟清单
+
+当改动 `doGenerateHtml()` 或导出相关 UI 时，至少做一次人工冒烟：
+
+1. 点击“生成排版并保存为PDF”，确认浏览器弹出系统打印对话框
+2. 观察导出后状态文案应进入成功状态，不应卡在 loading
+3. 取消打印后继续操作页面，按钮应恢复可点击，不应锁死
+4. 若导出报错，应显示失败状态，不应吞错或无提示
 
 ### 添加新的模型供应商
 1. 如果是 OpenAI 兼容 API：无需改后端，只需在 `index.html` 添加表格行 + `main.js` 的 `MODEL_CONNECTIONS` 添加条目

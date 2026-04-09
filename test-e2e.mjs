@@ -326,6 +326,42 @@ async function testMockJdImageOcr() {
   log('/ocr-jd-images mock returns text', data.text?.includes('岗位职责'), JSON.stringify(data));
 }
 
+async function testJdImageOcrValidation() {
+  const res = await postJSON('/ocr-jd-images', {
+    model: MODEL,
+    images: [],
+  });
+  const data = await res.json();
+  log('/ocr-jd-images empty images -> 400', res.status === 400, JSON.stringify(data));
+}
+
+async function testJdImageOcrInvalidModel() {
+  const res = await postJSON('/ocr-jd-images', {
+    model: '',
+    images: [{ mimeType: 'image/jpeg', data: 'ZmFrZQ==' }],
+  });
+  const data = await res.json();
+  log('/ocr-jd-images invalid model returns error', !res.ok && !!data.error, JSON.stringify(data));
+}
+
+async function testJdImageOcrRealOptional() {
+  // Optional real OCR smoke to avoid flaky failures in constrained CI/network environments.
+  if (process.env.RUN_OCR_REAL !== '1') {
+    log('/ocr-jd-images real smoke skipped', true, 'set RUN_OCR_REAL=1 to enable');
+    return;
+  }
+
+  // 1x1 png (transparent) base64; valid image payload for route plumbing.
+  const tinyPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP+2y4wqQAAAABJRU5ErkJggg==';
+  const res = await postJSON('/ocr-jd-images', {
+    model: MODEL,
+    images: [{ mimeType: 'image/png', data: tinyPngBase64 }],
+  });
+  const data = await res.json();
+  const hasShape = res.ok && typeof data.text === 'string' && data.usage && typeof data.model === 'string';
+  log('/ocr-jd-images real smoke structure', hasShape, JSON.stringify(data));
+}
+
 async function testGenerate() {
   const result = await postSSEWithRetry('/generate', {
     model: MODEL,
@@ -518,6 +554,9 @@ async function main() {
     await testListModels();
     await testFileRoutesAndDigest();
     await testMockJdImageOcr();
+    await testJdImageOcrValidation();
+    await testJdImageOcrInvalidModel();
+    await testJdImageOcrRealOptional();
     await delay(RATE_LIMIT_DELAY);
     const generated = await testGenerate();
     await delay(RATE_LIMIT_DELAY);

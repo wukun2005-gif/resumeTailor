@@ -174,6 +174,10 @@ router.post('/init', (req, res) => {
   // PII sanitization config
   if (piiConfig) setPiiConfig(piiConfig);
 
+  // Reset registry on each init to avoid stale connections
+  // affecting model fallback behavior.
+  connectionRegistry.clear();
+
   // Backward compat: accept old format
   const { geminiKey, geminiModel, anthropicKey, anthropicBaseUrl } = req.body;
 

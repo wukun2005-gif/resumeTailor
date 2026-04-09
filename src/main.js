@@ -1,7 +1,6 @@
 import * as state from './state.js';
 import * as api from './api.js';
 import { createWorker } from 'tesseract.js';
-import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
 
 /* ── Chat history utilities ── */
 const CHAT_WINDOW_SIZE = 5; // keep seed (2 msgs) + last N rounds (2N msgs)
