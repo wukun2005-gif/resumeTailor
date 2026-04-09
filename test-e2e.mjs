@@ -439,8 +439,8 @@ async function testGenerateHtml() {
   });
 
   const hasHtmlTag = /<html/i.test(result.text);
-  const hasBodyContent = result.text.includes('<h1') || result.text.includes('<h2') || result.text.includes('<p');
-  log('/generate-html body content returned', hasBodyContent, `length=${result.text.length}`);
+  const hasSemantics = result.text.includes('<h1') || result.text.includes('<h2') || result.text.includes('<p');
+  log('/generate-html semantics returned', hasSemantics, `length=${result.text.length}`);
   log('/generate-html body-only response', !hasHtmlTag, `hasHtmlTag=${hasHtmlTag}`);
 }
 

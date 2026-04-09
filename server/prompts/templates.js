@@ -219,14 +219,13 @@ export function getHtmlGenerationPrompt({ resumeText, formatRequirements, hyperl
   let prompt = `把以下简历文本转换为HTML。
 
 【硬性要求】：
+- 【最严红线】：绝对禁止删减、修改、归纳或增加任何原始简历文本。哪怕原文有错缺，也必须100%原样照抄！你的唯一任务是用语义标签将其包裹排版。
 - 只输出<body>标签内的HTML内容（不含<body>标签本身）
 - 不要输出<html>、<head>、<style>、<body>等外层标签
 - 不要输出CSS样式代码
 - 不要输出任何解释文字
 - 打印为PDF后必须控制在2页A4纸以内
-- 内容紧凑连续，不留大片空白
-- 保持内容完整，不要遗漏
-- 去掉LinkedIn链接`;
+- 【极其重要】：遇到形如 \`<<NAME>>\` 等带有尖括号的敏感占位符，【必须原样输出原本的双尖括号字符】，绝对不要转义成 \`&lt;&lt;NAME&gt;&gt;\` ！一旦转义将导致底层的安全机制严重失效。`;
 
   if (formatRequirements) prompt += `\n\n【用户的格式要求】：\n${formatRequirements}`;
 

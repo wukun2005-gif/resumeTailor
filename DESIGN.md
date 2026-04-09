@@ -887,6 +887,17 @@ Mock 数据包含：
 - 前端 `findSameCompanyFiles()` 函数：解析素材库文件名，提取公司名段并进行大小写不敏感匹配
 - 前端 `buildPreviouslySubmitted()` 函数：拼接匹配文件的内容
 - 前端 `showSameCompanyHint()` / `hideSameCompanyHint()` 函数：黄色警告栏 UI 提示
+### 2026-04-09 — Orchestrator 透明化与极客级原生打印接入
+
+**概述**：
+- 取消了 Orchestrator 模型选项的黑盒化，向用户显式提供性价比排序机制，最高优先推荐免费 Gemini 以节约成本。
+- 实现真正的纯正 PDF 触达：在调用 AI 完成深度的 HTML 语义结构转换后，系统不再提供繁琐的 `.html` 下载附件模式，而是通过注入隐藏 `iframe` 并执行 `window.print()`，直接在浏览器端调起系统原生的 PDF 打印弹窗。彻底解决 PDF 不可选字、无法过 ATS 的痛点问题。
+
+**修改文件**：
+- `index.html` — `#cfgAgentOrchestrator` 解除隐藏限制。
+- `src/main.js` — 修改了 `populateAgentDropdowns()` 和 `applyResolvedAgentSelections()`；升级 `doGenerateHtml` 逻辑，移除冗余的 HTML 文件下载拦截，添加原生 `window.print()` 挂载与触发闭环。
+- `test-e2e.mjs` — 针对 `/generate-html` 开发并强化了具备 `<h2>` 等语义化断言的 TDD 严苛测试防护。
+
 - `previouslySubmitted` 参数贯穿 `/api/generate`、`/api/review`、`/api/review-multi` 三个路由
 - 生成 prompt 注入事实层硬性约束 + 表达层可调整规则
 - 评审 prompt 追加跨投递一致性检查维度和输出格式

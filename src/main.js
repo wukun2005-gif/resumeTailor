@@ -1,6 +1,7 @@
 import * as state from './state.js';
 import * as api from './api.js';
 import { createWorker } from 'tesseract.js';
+import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
 
 /* ── Chat history utilities ── */
 const CHAT_WINDOW_SIZE = 5; // keep seed (2 msgs) + last N rounds (2N msgs)
@@ -380,6 +381,12 @@ function resolveReviewerConnectionIds(currentValues = [], savedValues = [], defa
 }
 
 function applyResolvedAgentSelections(overrides = {}) {
+  const orchestratorModel = resolveSingleConnectionId(
+    overrides.orchestratorValue ?? els.cfgAgentOrchestrator.value,
+    state.get('orchestratorModel', getBestOrchestratorModelId()),
+    getBestOrchestratorModelId(),
+  );
+  
   const generatorModel = resolveSingleConnectionId(
     overrides.generatorValue ?? els.cfgAgentGenerator.value,
     state.get('generatorModel', 'jiekou-anthropic'),
@@ -396,31 +403,53 @@ function applyResolvedAgentSelections(overrides = {}) {
     'google-studio-google',
   );
 
-  if (els.cfgAgentOrchestrator) els.cfgAgentOrchestrator.value = generatorModel;
+  if (els.cfgAgentOrchestrator) els.cfgAgentOrchestrator.value = orchestratorModel;
   els.cfgAgentGenerator.value = generatorModel;
   els.cfgAgentHtml.value = htmlModel;
   for (const cb of els.cfgAgentReviewers.querySelectorAll('input[type="checkbox"]')) {
     cb.checked = reviewerModels.includes(cb.value);
   }
 
-  return { generatorModel, htmlModel, reviewerModels };
+  return { orchestratorModel, generatorModel, htmlModel, reviewerModels };
+}
+
+function getBestOrchestratorModelId() {
+  const configured = getConfiguredConnections();
+  if (!configured.length) return '';
+  // Rank by cost efficiency internally
+  const score = (c) => {
+    if (c.id === 'google-studio-google') return 100;
+    const modelLower = (getConnInput(c.id, 'model')?.value || c.defaultModel || '').toLowerCase();
+    if (modelLower.includes('flash')) return 90;
+    if (modelLower.includes('mini')) return 80;
+    if (modelLower.includes('haiku')) return 70;
+    return 10; // Catch all for expensive models
+  };
+  return configured.reduce((best, current) => score(current) > score(best) ? current : best, configured[0]).id;
 }
 
 function populateAgentDropdowns() {
   const configured = getConfiguredConnections();
   const prevSelections = {
+    orchestratorValue: els.cfgAgentOrchestrator?.value,
     generatorValue: els.cfgAgentGenerator.value,
     htmlValue: els.cfgAgentHtml.value,
     reviewerValues: getSelectedReviewers(),
   };
+  const bestOrchestratorId = getBestOrchestratorModelId();
+  
   const options = configured.map(c =>
     `<option value="${c.id}">${c.label} (${getConnInput(c.id, 'model')?.value || c.defaultModel || c.family})</option>`
   ).join('');
+  const orchestratorOptions = configured.map(c =>
+    `<option value="${c.id}">${c.label} (${getConnInput(c.id, 'model')?.value || c.defaultModel || c.family}) ${c.id === bestOrchestratorId ? '[系统推荐：最高性价比]' : ''}</option>`
+  ).join('');
+  
   const emptyOption = '<option value="">— 未配置 —</option>';
 
-  for (const sel of [els.cfgAgentOrchestrator, els.cfgAgentGenerator, els.cfgAgentHtml].filter(Boolean)) {
-    sel.innerHTML = emptyOption + options;
-  }
+  if (els.cfgAgentOrchestrator) els.cfgAgentOrchestrator.innerHTML = emptyOption + orchestratorOptions;
+  if (els.cfgAgentGenerator) els.cfgAgentGenerator.innerHTML = emptyOption + options;
+  if (els.cfgAgentHtml) els.cfgAgentHtml.innerHTML = emptyOption + options;
 
   els.cfgAgentReviewers.innerHTML = configured.map(c =>
     `<label class="checkbox-label"><input type="checkbox" value="${c.id}"> ${c.label}</label>`
@@ -779,7 +808,7 @@ async function saveSettings() {
   }
 
   const assignments = populateAgentDropdowns();
-  state.set('orchestratorModel', '');
+  state.set('orchestratorModel', assignments.orchestratorModel);
   state.set('generatorModel', assignments.generatorModel);
   state.set('reviewerModels', assignments.reviewerModels);
   state.set('htmlModel', assignments.htmlModel);
@@ -1843,6 +1872,7 @@ async function doGenerateHtml() {
   els.generateHtmlBtn.disabled = true;
   els.htmlStatus.textContent = '生成 HTML 中...';
   els.htmlStatus.className = 'status-text';
+  if (els.htmlTokenInfo) els.htmlTokenInfo.textContent = '';
 
   let htmlContent = '';
   try {
@@ -1887,31 +1917,58 @@ async function doGenerateHtml() {
     // Save HTML for chat context
     lastHtmlContent = htmlContent;
 
-    // Browser native download
-    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = suggestedName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    els.htmlStatus.textContent = `HTML 已下载: ${suggestedName}（点击Chrome下载栏中的文件即可预览）`;
+    // Pop up native print dialog for direct PDF generation
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'absolute';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+    
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(htmlContent);
+    doc.close();
+
+    // Wait for layout/fonts to load and trigger print
+    setTimeout(() => {
+      // Hijack main document title so native print dialog uses it as PDF filename
+      const originalTitle = document.title;
+      document.title = pdfTitle;
+      
+      iframe.contentWindow.focus();
+      try {
+        // Some browsers prefer execCommand for iframes
+        iframe.contentWindow.document.execCommand('print', false, null);
+      } catch (e) {
+        iframe.contentWindow.print();
+      }
+      
+      // Restore title after print dialog closes (or when event loop frees up)
+      setTimeout(() => {
+        document.title = originalTitle;
+      }, 2000);
+      
+      setTimeout(() => document.body.removeChild(iframe), 60000); // Cleanup later
+    }, 500);
+
+    els.htmlStatus.textContent = '完成，已弹出保存为PDF的窗口';
     els.htmlStatus.className = 'status-text success';
 
-    // Show HTML chat section and init context (use body-only content, not full HTML with CSS)
+    // Show HTML chat section and init context in case user wants AI fixes
     els.htmlChatSection.style.display = '';
     htmlChatMessages = [
       { role: 'user', content: `请把以下简历生成HTML格式。\n\n简历文本:\n${resume}` },
       { role: 'assistant', content: bodyContent },
     ];
   } catch (e) {
+    console.error(e);
     els.htmlStatus.textContent = '生成失败: ' + e.message;
     els.htmlStatus.className = 'status-text error';
+  } finally {
+    isStreaming = false;
+    updateGenerateBtn();
   }
-  isStreaming = false;
-  els.generateHtmlBtn.disabled = false;
 }
 
 /* ── HTML Chat (debug layout issues) ── */

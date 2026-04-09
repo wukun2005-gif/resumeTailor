@@ -176,11 +176,21 @@ export function sanitizeMessages(messages, entries) {
  * @returns {{ push(chunk: string): void, end(): void }}
  */
 export function createStreamRestorer(entries, onFlushed) {
+  // 支持把 AI 自作主张经过 HTML 转义的 placeholder 也作为可被还原的受监控入口
+  const augmentedEntries = [];
+  for (const entry of entries) {
+    augmentedEntries.push(entry);
+    const escaped = entry.placeholder.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (escaped !== entry.placeholder) {
+      augmentedEntries.push({ real: entry.real, placeholder: escaped, caseInsensitive: entry.caseInsensitive });
+    }
+  }
+
   let buffer = '';
-  const placeholderPrefixes = new Set(['<', '<<']);
-  for (const { placeholder } of entries) {
+  const placeholderPrefixes = new Set();
+  for (const { placeholder } of augmentedEntries) {
     for (let i = 1; i < placeholder.length; i++) {
-      placeholderPrefixes.add(placeholder.slice(0, i));
+        placeholderPrefixes.add(placeholder.slice(0, i));
     }
   }
 
@@ -188,7 +198,7 @@ export function createStreamRestorer(entries, onFlushed) {
     if (!buffer) return;
 
     // 替换 buffer 中所有完整占位符
-    let processed = restore(buffer, entries);
+    let processed = restore(buffer, augmentedEntries);
 
     if (final) {
       // 流结束，发送全部剩余内容
