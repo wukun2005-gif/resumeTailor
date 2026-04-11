@@ -35,7 +35,29 @@ export async function callOpenAICompat(connectionId, prompt, onChunk, opts = {})
 
   // Prepend system message if provided and not already present
   if (opts.system && messages[0]?.role !== 'system') {
-    messages.unshift({ role: 'system', content: opts.system });
+    if (isAnthropicModel(connectionId, conn)) {
+      // Anthropic via OpenRouter: use content blocks with cache_control
+      messages.unshift({
+        role: 'system',
+        content: [
+          { type: 'text', text: opts.system, cache_control: { type: 'ephemeral' } }
+        ]
+      });
+    } else {
+      messages.unshift({ role: 'system', content: opts.system });
+    }
+  }
+
+  // If userBlocks is provided and Anthropic, convert user message to content blocks with cache_control
+  if (!opts.messages && opts.userBlocks && isAnthropicModel(connectionId, conn)) {
+    messages[messages.length - 1] = {
+      role: 'user',
+      content: opts.userBlocks.map(block => {
+        const part = { type: 'text', text: block.text };
+        if (block.cache) part.cache_control = { type: 'ephemeral' };
+        return part;
+      })
+    };
   }
 
   const url = `${conn.baseURL}/chat/completions`;
@@ -55,6 +77,16 @@ export async function callOpenAICompat(connectionId, prompt, onChunk, opts = {})
       ...(opts.jsonMode && { response_format: { type: 'json_object' } }),
     }),
   });
+/**
+ * 判断当前连接是否为 Anthropic 模型（OpenRouter/Anthropic均可）
+ * @param {string} connectionId
+ * @param {object} conn
+ */
+function isAnthropicModel(connectionId, conn) {
+  if (connectionId && connectionId.toLowerCase().includes('anthropic')) return true;
+  const model = (conn?.model || '').toLowerCase();
+  return model.includes('claude');
+}
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');

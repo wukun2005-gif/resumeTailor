@@ -1,3 +1,4 @@
+
 # 简历定制助手 — 设计文档
 
 > 本文档供后续开发者阅读，以便理解项目全貌后继续开发。每次改动须在末尾 Change Log 追加记录。
@@ -574,6 +575,23 @@ Mock 数据包含：
 ---
 
 ## Change Log
+
+### 2026-04-11 -- OpenRouter Anthropic Prompt Caching Support (by Copilot GPT-4.1)
+
+**Overview**: Enable prompt caching for Anthropic models via OpenRouter, reducing token usage by up to 90%.
+
+**Implementation**:
+- `server/services/openai-compat.js` detects Anthropic models (connectionId/model) and passes system/user messages as content blocks with `cache_control: { type: 'ephemeral' }`.
+- No changes to API routes or prompt templates required; only the OpenAI-compat layer is updated.
+
+**Testing**:
+- `node --check server/services/openai-compat.js`
+- `npm run build`
+- Manual: Configure OpenRouter Anthropic, run generate/review, verify cache hits in OpenRouter dashboard.
+
+**Impact**:
+- Dramatically reduces prompt token cost for Anthropic via OpenRouter.
+- No user-facing UI changes; optimization is internal.
 
 ### 2026-04-11 -- Export Preprocessed Text Library (by Antigravity)
 
