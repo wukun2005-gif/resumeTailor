@@ -59,7 +59,7 @@ const els = {
   // Agent assignment dropdowns
   cfgAgentOrchestrator: $('cfgAgentOrchestrator'), cfgAgentGenerator: $('cfgAgentGenerator'),
   cfgAgentReviewers: $('cfgAgentReviewers'), cfgAgentHtml: $('cfgAgentHtml'),
-  jdInput: $('jdInput'), libraryPath: $('libraryPath'), browseLibraryBtn: $('browseLibraryBtn'), loadLibraryBtn: $('loadLibraryBtn'), baseResumeSelect: $('baseResumeSelect'),
+  jdInput: $('jdInput'), libraryPath: $('libraryPath'), browseLibraryBtn: $('browseLibraryBtn'), loadLibraryBtn: $('loadLibraryBtn'), exportDigestBtn: $('exportDigestBtn'), exportDigestStatus: $('exportDigestStatus'), baseResumeSelect: $('baseResumeSelect'),
   jdImageUpload: $('jdImageUpload'), jdImageStatus: $('jdImageStatus'), jdImageAiRetryBtn: $('jdImageAiRetryBtn'), jdImageQualityHint: $('jdImageQualityHint'),
   manualResumeRow: $('manualResumeRow'), manualResumeInput: $('manualResumeInput'),
   genInstructions: $('genInstructions'), htmlInstructions: $('htmlInstructions'), generateCoverLetter: $('generateCoverLetter'),
@@ -709,6 +709,7 @@ function bindEvents() {
   els.settingsSave.addEventListener('click', saveSettings);
   els.browseLibraryBtn.addEventListener('click', browseLibrary);
   els.loadLibraryBtn.addEventListener('click', () => loadLibrary());
+  els.exportDigestBtn.addEventListener('click', exportDigest);
   els.baseResumeSelect.addEventListener('change', onBaseResumeChange);
   els.generateBtn.addEventListener('click', doGenerate);
   els.regenerateBtn.addEventListener('click', doGenerate);
@@ -966,8 +967,66 @@ async function loadLibrary(silent = false) {
     if (!silent) {
       els.resumeStatus.textContent = `已加载 ${files.length} 个文件（${readableCount} 个可读取）`;
     }
+    // Enable export button when library has readable files
+    els.exportDigestBtn.disabled = readableCount === 0;
   } catch (e) {
     if (!silent) alert('加载失败: ' + e.message);
+    els.exportDigestBtn.disabled = true;
+  }
+}
+
+/**
+ * Export the preprocessed (paragraph-deduplicated) text library as a
+ * human-readable .txt file for use with other AI tools.
+ */
+async function exportDigest() {
+  const dir = els.libraryPath.value.trim();
+  if (!dir) { alert('请先输入素材库路径并加载'); return; }
+  els.exportDigestBtn.disabled = true;
+  els.exportDigestStatus.textContent = '正在导出...';
+  els.exportDigestStatus.className = 'status-text';
+  try {
+    const { digest, fileCount } = await api.getLibraryDigest(dir, []);
+    if (!digest || digest.length === 0) {
+      els.exportDigestStatus.textContent = '素材库为空，无可导出内容';
+      els.exportDigestStatus.className = 'status-text error';
+      return;
+    }
+    // Build human-readable text
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const lines = [
+      '========== 素材库预处理文本 ==========',
+      `导出时间：${dateStr} ${timeStr}`,
+      `素材库路径：${dir}`,
+      `文件数量：${fileCount}`,
+      '已去重段落',
+      '',
+    ];
+    for (const item of digest) {
+      lines.push(`---------- ${item.name} ----------`);
+      lines.push(item.content);
+      lines.push('');
+    }
+    const text = lines.join('\n');
+    // Trigger browser download
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `素材库预处理文本-${dateStr}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    els.exportDigestStatus.textContent = `导出完成（${fileCount} 个文件）`;
+    els.exportDigestStatus.className = 'status-text success';
+  } catch (e) {
+    els.exportDigestStatus.textContent = '导出失败: ' + e.message;
+    els.exportDigestStatus.className = 'status-text error';
+  } finally {
+    els.exportDigestBtn.disabled = false;
   }
 }
 

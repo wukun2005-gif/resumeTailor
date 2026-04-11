@@ -314,6 +314,17 @@ async function testFileRoutesAndDigest() {
   const flattened = digest.digest.map(item => item.content).join('\n');
   const sharedCount = (flattened.match(/Shared Paragraph/g) || []).length;
   log('/library-digest deduplicates shared paragraphs', sharedCount === 1, flattened);
+
+  // Full export (no excludeNames) — simulates the "导出预处理文本素材库" feature
+  const exportRes = await postJSON('/library-digest', { dir });
+  const exportData = await exportRes.json();
+  const exportNames = exportData.digest.map(item => item.name);
+  const hasAllReadable = ['alpha.txt', 'beta.md', 'delta.html', 'saved.txt'].every(n => exportNames.includes(n));
+  log('/library-digest full export includes all readable files', hasAllReadable, exportNames.join(', '));
+  log('/library-digest full export fileCount', exportData.fileCount >= 4, `fileCount=${exportData.fileCount}`);
+  const exportFlattened = exportData.digest.map(item => item.content).join('\n');
+  const exportSharedCount = (exportFlattened.match(/Shared Paragraph/g) || []).length;
+  log('/library-digest full export still deduplicates', exportSharedCount === 1, `sharedCount=${exportSharedCount}`);
 }
 
 async function testMockJdImageOcr() {

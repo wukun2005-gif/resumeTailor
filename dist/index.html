@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>简历定制助手</title>
-  <script type="module" crossorigin src="/assets/index-CO2DpBFz.js"></script>
+  <script type="module" crossorigin src="/assets/index-CRm3-KNj.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-BhWzpEoD.css">
 </head>
 <body>
@@ -130,7 +130,10 @@
         <!-- Agent Role Assignment -->
         <fieldset>
           <legend>Agent 模型分配（从已配置的连接中选择）</legend>
-          <select id="cfgAgentOrchestrator" hidden aria-hidden="true"></select>
+          <div class="form-row">
+            <label>Orchestrator（负责JD解析及合并审核的协调调度）</label>
+            <select id="cfgAgentOrchestrator"></select>
+          </div>
           <div class="form-row">
             <label>Generator（简历/求职信生成）</label>
             <select id="cfgAgentGenerator"></select>
@@ -228,6 +231,8 @@
             <input type="text" id="libraryPath" placeholder="/Users/wukun/Documents/jl">
             <button id="browseLibraryBtn" class="btn-secondary">浏览</button>
             <button id="loadLibraryBtn" class="btn-secondary">加载</button>
+            <button id="exportDigestBtn" class="btn-secondary" disabled title="将素材库预处理为纯文本文件，供其他AI工具直接使用">导出预处理文本素材库</button>
+            <span id="exportDigestStatus" class="status-text"></span>
           </div>
         </div>
         <div class="form-row">
@@ -325,7 +330,7 @@
       <!-- HTML Download -->
       <div class="action-bar html-bar">
         <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
-          <button id="generateHtmlBtn" class="btn-primary" disabled>生成 HTML 并下载</button>
+          <button id="generateHtmlBtn" class="btn-primary" disabled>生成排版并保存为PDF</button>
           <div style="display:flex;gap:8px;align-items:center;">
             <span id="htmlTokenInfo" style="font-size:0.8rem;color:#666;white-space:nowrap;"></span>
             <span id="htmlStatus" class="status-text"></span>
