@@ -276,6 +276,20 @@ async function testListModels() {
   log('/list-models all Gemini family', allGemini, models.map(model => model.id).join(', '));
 }
 
+async function testListModelsWithInputKeyOverride() {
+  await postJSON('/init', {
+    modelConnections: [
+      { id: MODEL, key: 'invalid-key-for-regression', model: GEMINI_MODEL_ID, label: 'Google AI Studio' },
+    ],
+    allowedPaths: ['/tmp'],
+  });
+
+  const res = await postJSON('/list-models', { connectionId: MODEL, apiKey: GEMINI_KEY });
+  const data = await res.json();
+  const models = data.models || [];
+  log('/list-models apiKey override works even with stale init key', models.length > 0, `count=${models.length}`);
+}
+
 async function testFileRoutesAndDigest() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-e2e-'));
   const alpha = path.join(dir, 'alpha.txt');
@@ -563,6 +577,7 @@ async function main() {
     await testExtractJdInfoLocalFallback();
     await delay(RATE_LIMIT_DELAY);
     await testListModels();
+    await testListModelsWithInputKeyOverride();
     await testFileRoutesAndDigest();
     await testMockJdImageOcr();
     await testJdImageOcrValidation();

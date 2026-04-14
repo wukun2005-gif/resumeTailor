@@ -223,7 +223,7 @@ router.post('/init', (req, res) => {
 
 router.post('/list-models', async (req, res) => {
   try {
-    const { connectionId } = req.body;
+    const { connectionId, apiKey } = req.body;
     if (!connectionId) return res.status(400).json({ error: '需要提供 connectionId' });
 
     // Currently only supports google-studio-google
@@ -232,9 +232,10 @@ router.post('/list-models', async (req, res) => {
     }
 
     const conn = connectionRegistry.get(connectionId);
-    if (!conn) return res.status(400).json({ error: '连接未初始化，请先保存设置' });
+    const effectiveKey = String(apiKey || '').trim() || conn?.key;
+    if (!effectiveKey) return res.status(400).json({ error: '连接未初始化，请先保存设置，或在当前输入框填写有效 API Key' });
 
-    const models = await listGeminiModels(conn.key);
+    const models = await listGeminiModels(effectiveKey);
     res.json({ models });
   } catch (err) {
     res.status(500).json({ error: err.message });

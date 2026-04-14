@@ -76,13 +76,13 @@ export async function initAPI(config) {
   return res.json();
 }
 
-export async function listModels(connectionId) {
+export async function listModels(connectionId, apiKey = '') {
   let res;
   try {
     res = await fetch('/api/list-models', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ connectionId }),
+      body: JSON.stringify({ connectionId, apiKey }),
     });
   } catch (err) {
     throw new Error('无法连接后端服务器，请确认 npm run dev 正在运行');

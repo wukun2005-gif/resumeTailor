@@ -576,6 +576,23 @@ Mock 数据包含：
 
 ## Change Log
 
+### 2026-04-14 -- Gemini 模型查询改为优先使用当前输入 Key（by Codex）
+
+**概述**：修复“设置页查询 Gemini 模型时误报 API key 无效”的易错交互。根因是查询接口只使用后端已初始化的旧 key（依赖先点“保存设置”），与用户当前输入框的新 key 脱节。
+
+**实现**：
+- `src/main.js`：`fetchGeminiModels()` 查询前读取 `google-studio-google` 当前输入框 key；为空时直接提示；查询时传给前端 API 层。
+- `src/api.js`：`listModels(connectionId, apiKey)` 新增 `apiKey` 参数并透传给后端。
+- `server/routes/api.js`：`POST /api/list-models` 支持 `apiKey` 覆盖，优先使用请求体中的 key；若未提供再回退到连接注册表中的 key。
+
+**验证**：
+- 直接调用 Gemini 官方 `models` 接口验证 `.env` 中 key 有效（返回 200 + models 列表）。
+- 本地复现旧行为：后端初始化为无效 key 时会报 “API key not valid”。
+- 修复后验证：同样初始化无效 key，但在 `/api/list-models` 传入有效 `apiKey` 可成功返回模型列表。
+
+**文档**：
+- `README.md` 快速参考增加“查询 Gemini 模型失败排查”说明。
+
 ### 2026-04-11 -- OpenRouter Anthropic Prompt Caching Support (by Copilot GPT-4.1)
 
 **Overview**: Enable prompt caching for Anthropic models via OpenRouter, reducing token usage by up to 90%.

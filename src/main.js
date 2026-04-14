@@ -513,13 +513,25 @@ function updateSessionTotal() {
 async function fetchGeminiModels() {
   const statusEl = document.getElementById('geminiModelStatus');
   const queryBtn = document.getElementById('geminiQueryModelsBtn');
+  const keyInput = getConnInput('google-studio-google', 'key');
+  const currentKey = keyInput?.value.trim() || '';
+
+  if (!currentKey) {
+    if (statusEl) {
+      statusEl.textContent = '请先填写 API Key';
+      statusEl.className = 'status-text error';
+    }
+    alert('请先在 Google AI Studio 一行填写 API Key');
+    return;
+  }
+
   if (statusEl) {
     statusEl.textContent = '查询中...';
     statusEl.className = 'status-text';
   }
   if (queryBtn) queryBtn.disabled = true;
   try {
-    const response = await api.listModels('google-studio-google');
+    const response = await api.listModels('google-studio-google', currentKey);
     const { models } = response;
 
     const tbody = document.getElementById('geminiModelListBody');
