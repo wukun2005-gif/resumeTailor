@@ -296,18 +296,24 @@ async function testFileRoutesAndDigest() {
   const beta = path.join(dir, 'beta.md');
   const gamma = path.join(dir, 'gamma.pages');
   const html = path.join(dir, 'delta.html');
+  const jdNoise = path.join(dir, 'job-description.txt');
+  const repeats = path.join(dir, 'repeats.txt');
+  const exportArtifact = path.join(dir, '素材库预处理文本-2099-01-01.txt');
 
   await fs.writeFile(alpha, 'Summary\n\nShared Paragraph\n\nAlpha Only', 'utf-8');
   await fs.writeFile(beta, '# Title\n\nShared Paragraph\n\nBeta Only', 'utf-8');
   await fs.writeFile(gamma, '', 'utf-8');
   await fs.writeFile(html, '<html><body><h1>Hello</h1><p>HTML Only</p></body></html>', 'utf-8');
+  await fs.writeFile(jdNoise, '岗位职责：负责跨团队协作推进产品落地。\n\n任职要求：5年以上经验，熟悉AI相关产品。', 'utf-8');
+  await fs.writeFile(repeats, 'Led AI platform from 0 to 1, improved DAU by 200%.\n\nLed AI platform from 0 to 1 and improved DAU by 210%.', 'utf-8');
+  await fs.writeFile(exportArtifact, '========== 素材库预处理文本 ==========\nnoise', 'utf-8');
 
   await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
 
   const listRes = await getJSON(`/list-files?dir=${encodeURIComponent(dir)}`);
   const listData = await listRes.json();
   const names = listData.files.map(f => `${f.name}:${f.readable}`);
-  log('/list-files lists supported files', listData.files.length === 4, names.join(', '));
+  log('/list-files lists supported files', listData.files.length === 7, names.join(', '));
   log('/list-files marks pages unreadable', listData.files.some(f => f.name === 'gamma.pages' && f.readable === false), names.join(', '));
 
   const readTxtRes = await getJSON(`/read-file?path=${encodeURIComponent(alpha)}`);
@@ -333,12 +339,17 @@ async function testFileRoutesAndDigest() {
   const exportRes = await postJSON('/library-digest', { dir });
   const exportData = await exportRes.json();
   const exportNames = exportData.digest.map(item => item.name);
+  const excludesArtifacts = !exportNames.some(n => /^素材库预处理文本-.*\.txt$/i.test(n));
+  log('/library-digest excludes prior export artifact files', excludesArtifacts, exportNames.join(', '));
   const hasAllReadable = ['alpha.txt', 'beta.md', 'delta.html', 'saved.txt'].every(n => exportNames.includes(n));
   log('/library-digest full export includes all readable files', hasAllReadable, exportNames.join(', '));
   log('/library-digest full export fileCount', exportData.fileCount >= 4, `fileCount=${exportData.fileCount}`);
   const exportFlattened = exportData.digest.map(item => item.content).join('\n');
   const exportSharedCount = (exportFlattened.match(/Shared Paragraph/g) || []).length;
   log('/library-digest full export still deduplicates', exportSharedCount === 1, `sharedCount=${exportSharedCount}`);
+  log('/library-digest filters JD-like paragraphs', !/岗位职责|任职要求/.test(exportFlattened), exportFlattened);
+  const repeatCount = (exportFlattened.match(/Led AI platform from 0 to 1/gi) || []).length;
+  log('/library-digest near-duplicate paragraphs merged', repeatCount === 1, `repeatCount=${repeatCount}`);
 }
 
 async function testMockJdImageOcr() {

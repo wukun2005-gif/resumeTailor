@@ -168,7 +168,7 @@ connectionId === 'jiekou-anthropic'      → Anthropic SDK (anthropic.js)
 | GET | `/list-files` | 列出素材库文件 | No |
 | GET | `/read-file` | 读取单个文件 | No |
 | POST | `/save-file` | 保存文件 | No |
-| POST | `/library-digest` | 素材库段落去重 digest | No |
+| POST | `/library-digest` | 素材库清洗+去重 digest（过滤JD噪音 + 合并近似重复） | No |
 | POST | `/generate` | 生成简历/求职信 | SSE |
 | POST | `/review` | 单模型评审 | SSE |
 | POST | `/review-multi` | 多模型并行评审 + 合并 | SSE |
@@ -575,6 +575,22 @@ Mock 数据包含：
 ---
 
 ## Change Log
+
+### 2026-04-15 -- 素材库 digest：JD 噪音过滤 + 近似段落去重（by Codex）
+
+**概述**：在段落 MD5 去重基础上，过滤明显 JD/招聘无关段落，并合并高度相似的经历段落，降低导出与生成流程中的冗余 token。
+
+**实现**：
+- `server/services/libraryCache.js`：`isLikelyIrrelevantParagraph()`、`fingerprintParagraph()`、`similarity()`；`getLibraryDigest` 与 `appendToDigestCache` 共用同一套清洗逻辑。
+- `isExportedDigestArtifactFileName()`：默认排除文件名匹配 `素材库预处理文本-*.txt`（与应用导出的预处理文本下载名一致），避免「导出结果再被读入 digest」的递归噪音；`appendToDigestCache` 对同名保存也不写入缓存。
+- `test-e2e.mjs`：`testFileRoutesAndDigest` 增加 JD 样本与近似重复英文段落断言；断言导出 digest 不含上述 artifact 文件名。
+
+**验证**：
+- `node --check server/services/libraryCache.js`
+- `node --check test-e2e.mjs`
+- `npm run build`
+
+**文档**：`README.md` 产品边界与术语；本表 `/library-digest` 说明。
 
 ### 2026-04-14 -- Gemini 模型查询改为优先使用当前输入 Key（by Codex）
 
