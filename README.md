@@ -394,6 +394,16 @@ flowchart TD
         JD2 -->|失败| JD3["用户手动输入"]
     end
 
+    subgraph "模型自动切换（Model Fallback）"
+        M1["首选模型<br/>(高性能)"] -->|配额不足/错误| M2["备用模型1<br/>(Flash Lite)"]
+        M2 -->|配额不足/错误| M3["备用模型2<br/>(Flash)"]
+        M3 -->|配额不足/错误| M4["备用模型3<br/>(Pro)"]
+        M4 -->|所有模型失败| M5["提示用户更换API Key"]
+        M2 -->|成功| M_OK["使用备用模型<br/>继续处理"]
+        M3 -->|成功| M_OK
+        M4 -->|成功| M_OK
+    end
+
     subgraph "评审意见应用（差分模式）"
         D1["AI输出结构化差分指令"] --> D2["严格正则解析"]
         D2 -->|失败| D3["宽松正则解析<br/>(容忍空格差异)"]
@@ -404,8 +414,20 @@ flowchart TD
     end
 
     style JD_OK fill:#dcfce7
+    style M_OK fill:#dcfce7
     style D6 fill:#fef3c7
 ```
+
+**Model Fallback 机制**：
+- **智能模型优先级**：按性能和配额将模型分为3个优先级（Flash Lite → Flash → Pro）
+- **自动切换策略**：配额错误等待5秒后重试，其他错误等待15秒后重试
+- **成功恢复**：成功调用后重置模型索引，优先使用高性能模型
+- **模型优先级配置**：
+  1. **最优先级**（速度极快、配额最高）：gemini-3.1-flash-lite-preview、gemini-2.5-flash-lite、gemini-2.0-flash-lite
+  2. **综合能力最强**：gemini-3-flash-preview、gemini-2.5-flash、gemini-2.0-flash  
+  3. **高级能力**（配额较低）：gemini-3.1-pro-preview、gemini-3-pro-preview、gemini-2.5-pro
+------- REPLACE
+'''
 
 **差分匹配三层容错的设计意义**：AI输出的修改指令（"把A改成B"）中的"A"经常和原文有微小差异（多余空格、换行不一致等）。三层匹配确保即使AI不够精确，修改也不会静默丢失：
 

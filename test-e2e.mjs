@@ -21,6 +21,24 @@ const GEMINI_MODEL_ID = process.env.GEMINI_MODEL_ID || 'gemini-3.1-flash-lite-pr
 const RATE_LIMIT_DELAY = 8000;
 const RESULTS = [];
 
+// Model fallback configuration for E2E testing
+// 按优先级排序：1是最优先级，9是最低优先级
+const FALLBACK_MODELS = [
+  'gemini-3.1-flash-lite-preview',     // 1. 最推荐 (速度极快、配额最高)
+  'gemini-2.5-flash-lite',              // 2. 最推荐 (速度极快、配额最高)
+  'gemini-2.0-flash-lite',              // 3. 最推荐 (速度极快、配额最高)
+  'gemini-3-flash-preview',             // 4. 综合能力最强
+  'gemini-2.5-flash',                   // 5. 综合能力最强
+  'gemini-2.0-flash',                   // 6. 综合能力最强
+  'gemini-3.1-pro-preview',             // 7. 高级能力 (配额较低)
+  'gemini-3-pro-preview',               // 8. 高级能力 (配额较低)
+  'gemini-2.5-pro'                      // 9. 高级能力 (配额较低)
+];
+
+// Track current model index for fallback
+let currentModelIndex = 0;
+let lastError = null;
+
 if (!GEMINI_KEY) {
   console.error('请设置环境变量 GEMINI_KEY');
   process.exit(1);
@@ -151,6 +169,20 @@ function parseSSEText(text) {
   return { text: result, error, usage, model };
 }
 
+function isModelQuotaError(text = '') {
+  const lower = String(text).toLowerCase();
+  return lower.includes('配额不足') || lower.includes('resource_exhausted');
+}
+
+function getFallbackModel() {
+  if (currentModelIndex >= FALLBACK_MODELS.length) {
+    throw new Error(`所有模型都已尝试失败，无法继续 fallback`);
+  }
+  const fallbackModel = FALLBACK_MODELS[currentModelIndex];
+  console.log(`[Fallback] 尝试模型: ${fallbackModel} (第 ${currentModelIndex + 1}/${FALLBACK_MODELS.length} 个)`);
+  return fallbackModel;
+}
+
 async function postJSON(pathname, body) {
   return fetch(`${BASE}${pathname}`, {
     method: 'POST',
@@ -164,30 +196,107 @@ async function getJSON(pathname) {
 }
 
 async function postSSEWithRetry(pathname, body, retries = 4) {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const res = await postJSON(pathname, body);
-    const text = await res.text();
-    const parsed = parseSSEText(text);
+  // 如果是第一次调用且没有指定模型，使用 fallback 机制
+  if (!body.model && pathname !== '/init') {
+    body.model = MODEL;
+  }
 
-    if (parsed.error && isRetryableErrorText(parsed.error) && attempt < retries) {
-      const waitSec = 15 * (attempt + 1);
-      console.log(`  retryable error, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}`);
-      await delay(waitSec * 1000);
-      continue;
+  // 如果是 Gemini 相关的 API 调用，启用 fallback
+  if (body.model === MODEL && pathname !== '/init' && pathname !== '/list-models') {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        // 如果是第一次尝试，使用初始模型
+        if (attempt === 0) {
+          body.model = GEMINI_MODEL_ID;
+        } else {
+          // 如果失败，尝试下一个 fallback 模型
+          body.model = getFallbackModel();
+        }
+
+        console.log(`[Attempt ${attempt + 1}/${retries + 1}] 尝试模型: ${body.model}`);
+        
+        const res = await postJSON(pathname, body);
+        const text = await res.text();
+        const parsed = parseSSEText(text);
+
+        if (parsed.error && isRetryableErrorText(parsed.error)) {
+          if (isModelQuotaError(parsed.error)) {
+            // 配额错误，继续尝试下一个模型
+            currentModelIndex++;
+            lastError = parsed.error;
+            console.log(`[Quota Error] ${parsed.error}，尝试下一个模型...`);
+            
+            if (currentModelIndex < FALLBACK_MODELS.length) {
+              const waitSec = 5;
+              console.log(`等待 ${waitSec}s 后继续...`);
+              await delay(waitSec * 1000);
+              continue;
+            } else {
+              throw new Error(`所有模型都已尝试失败，最后一个错误: ${parsed.error}`);
+            }
+          } else if (attempt < retries) {
+            // 其他可重试错误
+            const waitSec = 15 * (attempt + 1);
+            console.log(`[Retryable Error] ${parsed.error}，等待 ${waitSec}s 后重试...`);
+            await delay(waitSec * 1000);
+            continue;
+          }
+        }
+
+        if (!parsed.text && isRetryableErrorText(text) && attempt < retries) {
+          const waitSec = 15 * (attempt + 1);
+          console.log(`[Transport Issue] 等待 ${waitSec}s 后重试...`);
+          await delay(waitSec * 1000);
+          continue;
+        }
+
+        if (!parsed.text && parsed.error) {
+          throw new Error(parsed.error);
+        }
+
+        // 成功调用，重置模型索引
+        if (currentModelIndex > 0) {
+          console.log(`[Success] 使用模型 ${body.model} 成功完成调用`);
+        }
+
+        return parsed;
+      } catch (err) {
+        if (attempt < retries) {
+          const waitSec = 15 * (attempt + 1);
+          console.log(`[Exception] ${err.message}，等待 ${waitSec}s 后重试...`);
+          await delay(waitSec * 1000);
+          continue;
+        }
+        throw err;
+      }
     }
+  } else {
+    // 非 Gemini 调用，使用原有逻辑
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const res = await postJSON(pathname, body);
+      const text = await res.text();
+      const parsed = parseSSEText(text);
 
-    if (!parsed.text && isRetryableErrorText(text) && attempt < retries) {
-      const waitSec = 15 * (attempt + 1);
-      console.log(`  retryable transport issue, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}`);
-      await delay(waitSec * 1000);
-      continue;
+      if (parsed.error && isRetryableErrorText(parsed.error) && attempt < retries) {
+        const waitSec = 15 * (attempt + 1);
+        console.log(`  retryable error, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}`);
+        await delay(waitSec * 1000);
+        continue;
+      }
+
+      if (!parsed.text && isRetryableErrorText(text) && attempt < retries) {
+        const waitSec = 15 * (attempt + 1);
+        console.log(`  retryable transport issue, waiting ${waitSec}s before retry ${attempt + 2}/${retries + 1}`);
+        await delay(waitSec * 1000);
+        continue;
+      }
+
+      if (!parsed.text && parsed.error) {
+        throw new Error(parsed.error);
+      }
+
+      return parsed;
     }
-
-    if (!parsed.text && parsed.error) {
-      throw new Error(parsed.error);
-    }
-
-    return parsed;
   }
 
   throw new Error(`SSE request failed after retries: ${pathname}`);

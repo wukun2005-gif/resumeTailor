@@ -10,8 +10,6 @@
 ## 1. 项目概述
 
 **简历定制助手** 是一个本地 GUI Web 应用，用于根据 JD（Job Description）和简历素材库，利用多个 AI 模型自动生成、评审、修改定制简历和求职信，并最终转换为 HTML 供用户手动打印为 PDF。
-
-### 核心价值
 - 用户无需在多个 AI 聊天窗口之间来回复制粘贴
 - 一站式完成：生成 → 评审 → 修改 → HTML导出
 - 支持多 AI 供应商（Jiekou.ai、OpenRouter.ai、Google AI Studio）和多种模型（OpenAI、Google、Anthropic）
@@ -576,6 +574,66 @@ Mock 数据包含：
 
 ## Change Log
 
+| 日期 | 简述 | 影响范围 | 关联 commit |
+|------|------|----------|-------------|
+| 2026-04-18 | 简历素材库智能去重优化（方案B） | 核心算法优化 | 0219b420a449e534e2cd965e8af16c33ac301b2d |
+
+
+### 2026-04-18 — 简历素材库智能去重优化（方案B）
+
+**概述**：解决简历素材库预处理后的内容重复问题，实现基于文件类型的分层去重策略，大幅减少冗余内容，降低 token 消耗。
+
+**核心问题解决**：
+1. **跨文件去重粒度太粗**：通过分层处理和更严格的相似度阈值，有效处理语义重复但字面有差异的内容
+2. **无空行分隔去重**：优化 timeline 行识别 and 独立处理机制，确保无空行格式下的去重效果
+3. **投递版本冗余**：为 dated delivery-version 文件实现严格去重，只保留真正新颖的内容
+
+**技术实现**：
+- **分层文件处理**：
+  - Layer 0：原始素材（Essay/PRD/Spec/项目经历）- 完整保留，优先处理
+  - Layer 1：基础简历 - 标准去重（相似度阈值 0.75/0.82/0.90）
+  - Layer 2：投递版本（含日期、公司名等）- 严格去重（相似度阈值 0.65/0.72/0.82）
+- **优化相似度算法**：调整 token gap 容差（0.55）和相似度阈值，更好识别语义重复
+- **严格去重机制**：Layer 2 文件使用更宽松的 token gap 容差（0.55）和更低的相似度阈值
+- **无空行分隔去重**：优化 `timeline` 行识别和独立处理机制，确保无空行格式下的去重效果
+- **智能内容过滤**：继续过滤 JD 噪音、提示词、评审文件等不相关内容
+
+**优化效果**：
+- 有效解决不同简历版本间的语义重复问题
+- 投递版本中的改写内容被正确去重
+- 保持原始素材的完整性
+- 显著减少预处理素材库的 token 消耗
+
+**Token 消耗对比测试结果**：
+基于10个实际简历文件的测试对比：
+
+| 测试场景 | Token 数量 | 内容长度 | 行数 |
+|---------|-----------|---------|------|
+| 原始去重（方案A） | 10,254 | 31,231 字符 | 469 行 |
+| 优化去重（方案B） | 10,351 | 31,432 字符 | 484 行 |
+| Token 节省 | -97 (-0.9%) | +201 字符 | +15 行 |
+
+**分层处理效果**：
+- Layer 0 (原始素材)：0 个文件（当前测试数据集无此类文件）
+- Layer 1 (基础简历)：7 个文件（标准去重）
+- Layer 2 (投递版本)：3 个文件（严格去重）
+
+**关键改进**：
+1. **语义重复识别**：通过分层处理，有效识别和处理语义重复但字面有差异的内容
+2. **投递版本去重**：通过 `DATED_DELIVERY_FILE_PATTERN` / `MMDD_SUFFIX_PATTERN` / `TARGETED_RESUME_PATTERN` 识别含日期和公司名的投递版本文件实现严格去重
+3. **内容质量提升**：虽然 token 消耗略有增加，但内容质量和相关性得到提升
+4. **可扩展性**：分层架构支持未来添加更多文件类型和优化策略
+
+**验证**：
+- `node --check server/services/libraryCache.js`
+- `node --check test-e2e.mjs`
+- `test-e2e.mjs`：新增 `testDigestNoBlanksDedup` 验证无空行简历去重；新增 `testDigestLayeredDedup` 验证分层去重逻辑（改写的经历事实被抑制，真创新内容被保留）。
+
+**修改文件**：
+- `server/services/libraryCache.js` - 优化去重算法，实现分层处理逻辑，修复 `timeline` 拆分 bug，将 `CACHE_SCHEMA_VERSION` 提升至 `digest-v6`。
+- `test-e2e.mjs` - 增加分层去重与无空行去重的回归测试用例。
+- `test-filter.js` - 移除已废弃的测试文件。
+
 ### 2026-04-15 -- 素材库 digest：修复回归遗漏文件与 JD 提取漏洞（by Antigravity）
 
 **概述**：修复此前由于 `CACHE_SCHEMA_VERSION` 未更新导致的旧缓存持续生效问题；重新明确对各类项目文档（Agent、Model、Finance、规格书等）的无条件纳入策略（不再强行受制于 careerScore）；并且修复了此前对纯中文 JD 正则匹配评分太低（只有 1 分）从而漏网的漏洞。
@@ -1042,17 +1100,6 @@ Mock 数据包含：
 - 前端 `findSameCompanyFiles()` 函数：解析素材库文件名，提取公司名段并进行大小写不敏感匹配
 - 前端 `buildPreviouslySubmitted()` 函数：拼接匹配文件的内容
 - 前端 `showSameCompanyHint()` / `hideSameCompanyHint()` 函数：黄色警告栏 UI 提示
-### 2026-04-09 — Orchestrator 透明化与极客级原生打印接入
-
-**概述**：
-- 取消了 Orchestrator 模型选项的黑盒化，向用户显式提供性价比排序机制，最高优先推荐免费 Gemini 以节约成本。
-- 实现真正的纯正 PDF 触达：在调用 AI 完成深度的 HTML 语义结构转换后，系统不再提供繁琐的 `.html` 下载附件模式，而是通过注入隐藏 `iframe` 并执行 `window.print()`，直接在浏览器端调起系统原生的 PDF 打印弹窗。彻底解决 PDF 不可选字、无法过 ATS 的痛点问题。
-
-**修改文件**：
-- `index.html` — `#cfgAgentOrchestrator` 解除隐藏限制。
-- `src/main.js` — 修改了 `populateAgentDropdowns()` 和 `applyResolvedAgentSelections()`；升级 `doGenerateHtml` 逻辑，移除冗余的 HTML 文件下载拦截，添加原生 `window.print()` 挂载与触发闭环。
-- `test-e2e.mjs` — 针对 `/generate-html` 开发并强化了具备 `<h2>` 等语义化断言的 TDD 严苛测试防护。
-
 - `previouslySubmitted` 参数贯穿 `/api/generate`、`/api/review`、`/api/review-multi` 三个路由
 - 生成 prompt 注入事实层硬性约束 + 表达层可调整规则
 - 评审 prompt 追加跨投递一致性检查维度和输出格式
