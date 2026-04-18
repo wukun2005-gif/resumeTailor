@@ -168,7 +168,7 @@ connectionId === 'jiekou-anthropic'      → Anthropic SDK (anthropic.js)
 | GET | `/list-files` | 列出素材库文件 | No |
 | GET | `/read-file` | 读取单个文件 | No |
 | POST | `/save-file` | 保存文件 | No |
-| POST | `/library-digest` | 素材库清洗+去重 digest（过滤JD噪音 + 合并近似重复） | No |
+| POST | `/library-digest` | 素材库清洗+去重 digest（排除 prompt/review artifact；完整纳入 PRD/Spec/Essay/项目经历等原始材料后去重） | No |
 | POST | `/generate` | 生成简历/求职信 | SSE |
 | POST | `/review` | 单模型评审 | SSE |
 | POST | `/review-multi` | 多模型并行评审 + 合并 | SSE |
@@ -575,6 +575,60 @@ Mock 数据包含：
 ---
 
 ## Change Log
+
+### 2026-04-15 -- 素材库 digest：修复回归遗漏文件与 JD 提取漏洞（by Antigravity）
+
+**概述**：修复此前由于 `CACHE_SCHEMA_VERSION` 未更新导致的旧缓存持续生效问题；重新明确对各类项目文档（Agent、Model、Finance、规格书等）的无条件纳入策略（不再强行受制于 careerScore）；并且修复了此前对纯中文 JD 正则匹配评分太低（只有 1 分）从而漏网的漏洞。
+另外修复了一个由放宽 PRD 提取策略引起的漏洞：包含有 PRD 关键词的 Prompt 文件（如“简历arena提示词.txt”）在之前的逻辑中能够绕过文件黑名单检查，目前已将文件黑名单前置为顶级铁律，且增强了 `jdScore >= 2` 的一票否决权，确保含有较高职涯关键词的纯英文 JD 不再渗透进用户结果库。
+
+**实现**：
+- `server/services/libraryCache.js`：将 `CACHE_SCHEMA_VERSION` 更新为 `digest-v5`，强制系统再次基于新规则全面洗牌去重。
+- `extractRelevantParagraphs`：将 `NEGATIVE_FILE_NAME_PATTERNS` 验证移动到所有文本和内容正则扫描之前的首行进行拦截。
+- `shouldKeepFile`：将 `jdScore >= 2` 变为独立的一票否决条件，废弃掉高 `careerScore` 的豁免保护，阻断含丰富经验关键词英语职位描述绕过过滤的漏洞。
+- 扩展 `FULL_PRESERVE_FILE_NAME_PATTERNS`：显式加入 `agent`、`model`、`finance`、`规格书`。
+- 修改 `shouldPreserveFullFile`：放宽 PRD 的正文判定条件，如果包含 PRD 等文件类型且毫不含 JD 时强制提取。
+- 修复 `getJdSignalScore`：分离 "岗位职责" 与 "任职要求"，使得中文 JD 累加打分正常达到 2 分以上遭到过滤。
+- `test-e2e.mjs`：对针对 prompt 文件规避库检测的特殊案例追加了附带 "PRD" 字眼的注入测试以防御未来的再回归。
+
+### 2026-04-15 -- 素材库 digest：原始项目文档全文纳入（by Codex）
+
+**概述**：修正上一版规则过于激进的问题。用户明确要求 `Essay`、`PRD`、`Spec/Specification`、`项目经历` 等原始工作经历材料必须全文纳入 digest，一个字都不能丢；这些材料进入 digest 后允许和其他素材去重，但不再因为文件名、JD-like 词汇或规格文档结构被过滤掉。
+
+**实现**：
+- `server/services/libraryCache.js`：新增 `FULL_PRESERVE_FILE_NAME_PATTERNS`、`FULL_PRESERVE_CONTENT_PATTERNS`、`shouldPreserveFullFile()`、`splitPreservedBlocks()`、`splitStoredDigestContent()`。
+- 对命中 `Essay` / `PRD` / `Spec` / `项目经历` 的文件，以及内容中明显属于 `Specification` / `PRD` 的工作文档，改为“全文保留分块”路径：保留原始文本，不再做 JD / prompt 段落裁剪，只参与全局去重。
+- 继续排除明显的 artifact 文件：`prompt`/`提示词`/`arena`/`review`/`score`/`AGENTS.md`/`README*`/`DESIGN*`/旧导出 `素材库预处理文本-*.txt`。
+- `appendToDigestCache()` 改用 `splitStoredDigestContent()` 读取已缓存内容，保证增量更新与“全文保留”策略一致。
+- `CACHE_SCHEMA_VERSION` 升级到 `digest-v3`，触发旧 cache 自动失效重建。
+- `test-e2e.mjs`：`testFileRoutesAndDigest()` 新增 `Written Essay.txt`、`OmniDataFlow PRD.md`、`ExcelAgent Specification.md`、`项目经历.txt` 样本；断言这些文件会被全文纳入，同时 `job-description.txt` 与 `简历arena提示词.txt` 仍会被排除。
+
+**验证**：
+- `node --check server/services/libraryCache.js`
+- `node --check test-e2e.mjs`
+- 本地合成样本 direct call：`项目经历.txt` / `Written Essay.txt` / `OmniDataFlow PRD.md` / `ExcelAgent Specification.md` 均进入 digest，且保留原文；`简历arena提示词.txt` 与纯 `job-description.txt` 仍被排除
+- 对真实素材库 `/Users/wukun/Documents/jl` dry-run：`fileCount=88`，并确认 `Written Essay.txt`、`Resume Tailor APP - PRD.md`、`项目经历.txt`、`ExcelAgent_Kun_FinanceModel.pdf`、`OmniDataFlow PRD.pdf` 均已纳入 digest
+- `npm run build`
+
+**文档**：`README.md` 产品边界与术语；本表 `/library-digest` 说明。
+
+### 2026-04-15 -- 素材库 digest：过滤提示词/说明文档 + 结构化分块去重（by Codex）
+
+**概述**：继续压缩导出素材库中的无关内容。除了原有 JD 噪音过滤外，这次进一步排除提示词/打分稿/说明文档等非经历文件，并把 PDF/无空行履历按 heading、bullet、timeline 拆成更小块后再去重，减少像 Apple PMO prompt/JD 混入和同一事实跨版本反复出现的问题。
+
+**实现**：
+- `server/services/libraryCache.js`：新增 `shouldKeepFile()`、`splitParagraphs()`、`classifyLine()`、`getCareerSignalScore()`、`getPromptSignalScore()`、`getJdSignalScore()`，把清洗提升为“文件级筛除 + 结构化分块 + 段落级保留/去重”三层策略。
+- 文件名和内容双重过滤：默认排除 `prompt`/`提示词`/`review`/`score`/`AGENTS`/`PRD`/`essay` 等明显非素材文件；对整文件做 career-signal / prompt-signal / JD-signal 打分，避免整份提示词或说明文档进入 digest。
+- 去重与缓存：`fingerprintParagraph()` 改为 token 指纹，短块走精确比较，长块走更宽松的近似重复阈值；`CACHE_SCHEMA_VERSION` 写入 cache key，确保旧规则生成的 digest 会自动失效重建。
+- `test-e2e.mjs`：`testFileRoutesAndDigest()` 新增 prompt artifact 样本和“无空行但有 bullet”的履历样本；断言导出 digest 不含 `简历arena提示词.txt`、不含 Apple PMO prompt/JD 文本，并继续验证共享经历与近似重复事实只保留一份。
+
+**验证**：
+- `node --check server/services/libraryCache.js`
+- `node --check test-e2e.mjs`
+- `npm run build`
+- `node -e "import { getLibraryDigest } from './server/services/libraryCache.js'; ..."`：对真实素材库 `/Users/wukun/Documents/jl` dry-run，结果 `fileCount=78`，且 `hasPromptFile=false`、`hasAgents=false`、`hasPrd=false`、`hasApplePmoPrompt=false`
+- `TEST_BASE=http://localhost:3002/api node test-e2e.mjs`：完整 Lean E2E 已执行；所有 `/library-digest` 相关断言通过，但脚本后续仍因外部 Gemini API 繁忙和 `/extract-jd-info` 实时调用失败而未全绿
+
+**文档**：`README.md` 产品边界与术语；本表 `/library-digest` 说明。
 
 ### 2026-04-15 -- 素材库 digest：JD 噪音过滤 + 近似段落去重（by Codex）
 

@@ -10,4 +10,6 @@
 6. 本地读取 PDF 的方式参考 `/Users/wukun/Documents/jl/AGENTS.md`。
 7. 开发过程产生的临时文件、临时工具与临时测试代码需及时清理，不留垃圾。
 
+2026-04-15：上述原则已由用户再次确认，后续开发默认继续严格遵循。
+
 参考资料：`/Users/wukun/.gemini/antigravity/knowledge/dev_principles/artifacts/dev_principles.md`

@@ -298,14 +298,98 @@ async function testFileRoutesAndDigest() {
   const html = path.join(dir, 'delta.html');
   const jdNoise = path.join(dir, 'job-description.txt');
   const repeats = path.join(dir, 'repeats.txt');
+  const essayArtifact = path.join(dir, 'Written Essay.txt');
+  const prdArtifact = path.join(dir, 'OmniDataFlow PRD.md');
+  const specArtifact = path.join(dir, 'ExcelAgent Specification.md');
+  const projectArtifact = path.join(dir, '项目经历.txt');
+  const promptArtifact = path.join(dir, '简历arena提示词.txt');
   const exportArtifact = path.join(dir, '素材库预处理文本-2099-01-01.txt');
 
-  await fs.writeFile(alpha, 'Summary\n\nShared Paragraph\n\nAlpha Only', 'utf-8');
-  await fs.writeFile(beta, '# Title\n\nShared Paragraph\n\nBeta Only', 'utf-8');
+  const sharedFact = 'Led cross-functional AI platform delivery and improved customer satisfaction by 20%.';
+
+  await fs.writeFile(alpha, [
+    'Summary',
+    '',
+    'Senior Program Manager with 10+ years of experience delivering AI products.',
+    '',
+    'Work Experience',
+    '',
+    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
+    '',
+    sharedFact,
+    '',
+    'Defined rollout milestones for enterprise AI launches.',
+  ].join('\n'), 'utf-8');
+  await fs.writeFile(beta, [
+    '# Professional Experience',
+    '',
+    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
+    '',
+    sharedFact,
+    '',
+    'Built evaluation tooling for enterprise rollout.',
+  ].join('\n'), 'utf-8');
   await fs.writeFile(gamma, '', 'utf-8');
-  await fs.writeFile(html, '<html><body><h1>Hello</h1><p>HTML Only</p></body></html>', 'utf-8');
+  await fs.writeFile(html, '<html><body><h1>Professional Experience</h1><p>Nokia | Senior Program Manager | 2013-08 - 2015-03</p><p>Managed imaging platform delivery across global teams.</p></body></html>', 'utf-8');
   await fs.writeFile(jdNoise, '岗位职责：负责跨团队协作推进产品落地。\n\n任职要求：5年以上经验，熟悉AI相关产品。', 'utf-8');
-  await fs.writeFile(repeats, 'Led AI platform from 0 to 1, improved DAU by 200%.\n\nLed AI platform from 0 to 1 and improved DAU by 210%.', 'utf-8');
+  await fs.writeFile(repeats, [
+    'Professional Experience',
+    'Microsoft | Senior Program Manager | 2024-01 - 2025-01',
+    '- Led AI platform from 0 to 1, improved DAU by 200%.',
+    '- Led AI platform from 0 to 1 and improved DAU by 210%.',
+  ].join('\n'), 'utf-8');
+  await fs.writeFile(essayArtifact, [
+    'Subject: Improving Enterprise Agent Search Relevance with LLM-Grounded RAG Semantic Search Technology',
+    '',
+    'Situation',
+    'When I joined the Copilot Search Relevance team in 2024 as Senior Product Manager, user satisfaction was 60%.',
+    '',
+    'Task',
+    'Define a technically sound solution and drive business outcomes.',
+    '',
+    'Result',
+    'User satisfaction rose from 60% to 80%.',
+  ].join('\n'), 'utf-8');
+  await fs.writeFile(prdArtifact, [
+    'OmniDataFlow产品需求文档（PRD）',
+    '',
+    '1. What—产品定义',
+    'OmniDataFlow是一个面向内部团队的一站式数据标注与内容生成平台。',
+    '',
+    '2. Why—动机与背景',
+    '效率跃迁：通过工具整合+AI辅助，实现1000人完成3000人的工作量。',
+  ].join('\n'), 'utf-8');
+  await fs.writeFile(specArtifact, [
+    'Excel Agent - "Financial Model from Structured Inputs", MVP Specification',
+    '',
+    '1. Problem Statement & User Context',
+    'Enable finance users to create scenario-based models faster.',
+    '',
+    '2. Product Goal',
+    'Generate an auditable financial model from structured inputs.',
+  ].join('\n'), 'utf-8');
+  await fs.writeFile(projectArtifact, [
+    '[ 项目经历 ]',
+    'Copilot RAG Search Relevance Improve，高级产品项目经理，2024.09 – 2025.05；',
+    'Responsibility:',
+    'Defined product strategy and success metrics.',
+    '职位描述：这段是原始素材中的上下文备注，需要原文保留。',
+    '成果与贡献：NDCG提高10%，客户满意度提升20%。',
+  ].join('\n'), 'utf-8');
+  await fs.writeFile(promptArtifact, [
+    '下面是职位JD。下面是面向这个产品需求文档改写的2个版本的我的简历。给每个版本打分（0-100分）。哪个版本最好？',
+    '',
+    'Program Management Office (PMO) Manager PRD/Specification Requirement',
+    'Posted: Mar 13, 2026',
+    'Role Number: 200651373-0351',
+    'Responsibilities: Lead end-to-end program management for complex cross-functional initiatives.',
+    '',
+    '1. Wu Kun',
+    'Senior Program Manager with 20+ years of experience.',
+    '',
+    '2. Wu Kun',
+    'PMP-certified program manager focused on AI product delivery.',
+  ].join('\n'), 'utf-8');
   await fs.writeFile(exportArtifact, '========== 素材库预处理文本 ==========\nnoise', 'utf-8');
 
   await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
@@ -313,41 +397,62 @@ async function testFileRoutesAndDigest() {
   const listRes = await getJSON(`/list-files?dir=${encodeURIComponent(dir)}`);
   const listData = await listRes.json();
   const names = listData.files.map(f => `${f.name}:${f.readable}`);
-  log('/list-files lists supported files', listData.files.length === 7, names.join(', '));
+  log('/list-files lists supported files', listData.files.length === 12, names.join(', '));
   log('/list-files marks pages unreadable', listData.files.some(f => f.name === 'gamma.pages' && f.readable === false), names.join(', '));
 
   const readTxtRes = await getJSON(`/read-file?path=${encodeURIComponent(alpha)}`);
   const readTxtData = await readTxtRes.json();
-  log('/read-file txt returns content', readTxtData.content.includes('Alpha Only'), readTxtData.content);
+  log('/read-file txt returns content', readTxtData.content.includes(sharedFact), readTxtData.content);
 
   const readPagesRes = await getJSON(`/read-file?path=${encodeURIComponent(gamma)}`);
   const readPagesData = await readPagesRes.json();
   log('/read-file pages returns manual paste hint', readPagesRes.status === 400 && readPagesData.error === 'PAGES_NOT_SUPPORTED', JSON.stringify(readPagesData));
 
   const savePath = path.join(dir, 'saved.txt');
-  const saveRes = await postJSON('/save-file', { filePath: savePath, content: 'Saved\n\nShared Paragraph\n\nNew Info' });
+  const saveRes = await postJSON('/save-file', {
+    filePath: savePath,
+    content: [
+      'Professional Experience',
+      '',
+      'Microsoft | Senior Program Manager | 2024-01 - 2025-01',
+      '',
+      sharedFact,
+      '',
+      'Established rollout governance for enterprise AI delivery.',
+    ].join('\n'),
+  });
   const saveData = await saveRes.json();
   log('/save-file success', saveData.success === true, JSON.stringify(saveData));
 
   const digestRes = await postJSON('/library-digest', { dir, excludeNames: ['gamma.pages'] });
   const digest = await digestRes.json();
+  const digestNames = digest.digest.map(item => item.name);
   const flattened = digest.digest.map(item => item.content).join('\n');
-  const sharedCount = (flattened.match(/Shared Paragraph/g) || []).length;
+  const sharedCount = (flattened.match(new RegExp(sharedFact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
   log('/library-digest deduplicates shared paragraphs', sharedCount === 1, flattened);
+  log('/library-digest excludes prompt-style artifact files', !digestNames.includes('简历arena提示词.txt'), digestNames.join(', '));
+  log('/library-digest excludes pure JD files', !digestNames.includes('job-description.txt'), digestNames.join(', '));
 
   // Full export (no excludeNames) — simulates the "导出预处理文本素材库" feature
   const exportRes = await postJSON('/library-digest', { dir });
   const exportData = await exportRes.json();
   const exportNames = exportData.digest.map(item => item.name);
+  const exportMap = new Map(exportData.digest.map(item => [item.name, item.content]));
   const excludesArtifacts = !exportNames.some(n => /^素材库预处理文本-.*\.txt$/i.test(n));
   log('/library-digest excludes prior export artifact files', excludesArtifacts, exportNames.join(', '));
-  const hasAllReadable = ['alpha.txt', 'beta.md', 'delta.html', 'saved.txt'].every(n => exportNames.includes(n));
+  log('/library-digest full export excludes prompt-style files', !exportNames.includes('简历arena提示词.txt'), exportNames.join(', '));
+  log('/library-digest full export excludes pure JD files', !exportNames.includes('job-description.txt'), exportNames.join(', '));
+  const hasAllReadable = ['alpha.txt', 'beta.md', 'delta.html', 'repeats.txt', 'saved.txt', 'Written Essay.txt', 'OmniDataFlow PRD.md', 'ExcelAgent Specification.md', '项目经历.txt'].every(n => exportNames.includes(n));
   log('/library-digest full export includes all readable files', hasAllReadable, exportNames.join(', '));
-  log('/library-digest full export fileCount', exportData.fileCount >= 4, `fileCount=${exportData.fileCount}`);
+  log('/library-digest full export fileCount', exportData.fileCount >= 9, `fileCount=${exportData.fileCount}`);
   const exportFlattened = exportData.digest.map(item => item.content).join('\n');
-  const exportSharedCount = (exportFlattened.match(/Shared Paragraph/g) || []).length;
+  const exportSharedCount = (exportFlattened.match(new RegExp(sharedFact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
   log('/library-digest full export still deduplicates', exportSharedCount === 1, `sharedCount=${exportSharedCount}`);
-  log('/library-digest filters JD-like paragraphs', !/岗位职责|任职要求/.test(exportFlattened), exportFlattened);
+  log('/library-digest strips Apple PMO prompt text', !/Program Management Office \(PMO\) Manager|Role Number: 200651373-0351/.test(exportFlattened), exportFlattened);
+  log('/library-digest preserves essay artifact text', exportMap.get('Written Essay.txt')?.includes('User satisfaction rose from 60% to 80%.'), exportMap.get('Written Essay.txt') || '');
+  log('/library-digest preserves PRD artifact text', exportMap.get('OmniDataFlow PRD.md')?.includes('OmniDataFlow产品需求文档（PRD）'), exportMap.get('OmniDataFlow PRD.md') || '');
+  log('/library-digest preserves spec artifact text', exportMap.get('ExcelAgent Specification.md')?.includes('MVP Specification'), exportMap.get('ExcelAgent Specification.md') || '');
+  log('/library-digest preserves project artifact text verbatim', exportMap.get('项目经历.txt')?.includes('职位描述：这段是原始素材中的上下文备注，需要原文保留。'), exportMap.get('项目经历.txt') || '');
   const repeatCount = (exportFlattened.match(/Led AI platform from 0 to 1/gi) || []).length;
   log('/library-digest near-duplicate paragraphs merged', repeatCount === 1, `repeatCount=${repeatCount}`);
 }
