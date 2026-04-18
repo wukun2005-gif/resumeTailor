@@ -5,7 +5,7 @@ import { readFileContent, listResumeFiles } from './fileReader.js';
 
 const CACHE_DIR = '.resume-tailor-cache';
 const CACHE_FILE = 'digest.json';
-const CACHE_SCHEMA_VERSION = 'digest-v5';
+const CACHE_SCHEMA_VERSION = 'digest-v6';
 const POSITIVE_FILE_NAME_PATTERNS = [
   /\bresume\b/i,
   /\bcv\b/i,
@@ -57,6 +57,21 @@ const COVER_LETTER_PATTERN = /\b(?:dear hiring manager|sincerely|i am applying|l
 const CONTACT_PATTERN = /\b(?:email|e-mail|phone|mobile|linkedin|github)\b|https?:\/\/|@\w+/i;
 const PAGE_ARTIFACT_PATTERN = /\bpage\s+\d+\s*(?:of|\/)\s*\d+\b|\bpage of \d+\s+\d+\b/i;
 const SECTION_HEADING_PATTERN = /^(?:\[?\s*)?(?:executive summary|summary|professional experience|work experience|experience|core skills|core competencies|skills?|education|certifications?|credentials|patents?|career objective|cover letter|project experience|key project experience|responsibility|achievement(?:s)?(?:\s*&\s*contribution)?|个人简介|工作经历|项目经历|项目经验|教育背景|技能|核心竞争力|求职信|工作经验|证书|认证|专利|职责|成果)(?:\s*\]?)?(?:\s*[:：])?$/i;
+/**
+ * Matches a full date (year + month) embedded in a filename, e.g. "2026-04-15" or "2026.04".
+ * Used to identify delivery-version files (Layer 2).
+ */
+const DATED_DELIVERY_FILE_PATTERN = /(?:19|20)\d{2}[-.](?:0?[1-9]|1[0-2])(?:[-.]\d{1,2})?/;
+/**
+ * Matches 4-digit month-day suffixes used in older resume versions, e.g. "_0102", "_0808".
+ */
+const MMDD_SUFFIX_PATTERN = /_(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?=[._\s]|$)/;
+/**
+ * Matches resume/cover-letter files that target a specific company or role,
+ * indicating a delivery version rather than a canonical base resume.
+ * Looks for "_xxx" or "- Company/Role" qualifiers after the base name.
+ */
+const TARGETED_RESUME_PATTERN = /(?:resume|cv|cover[_\s-]?letter|cover_letter|求职信|简历|cv).*[-_](\w{3,})/i;
 const FINGERPRINT_STOPWORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'in', 'into',
   'is', 'of', 'on', 'or', 'that', 'the', 'their', 'these', 'this', 'those', 'to',
@@ -101,14 +116,20 @@ export async function getLibraryDigest(dirPath, excludeNames = []) {
     return { digest: cached.digest, fromCache: true };
   }
 
+  // Layer ordering: 0 = full-preserve originals first, 1 = base resumes, 2 = dated delivery versions last.
+  // Layer 2 files are processed after layer 0+1 content is registered, so their blocks are aggressively
+  // deduplicated against earlier content — only genuinely novel blocks from delivery versions survive.
+  const sortedFiles = [...targetFiles].sort((a, b) => classifyFileLayer(a.name) - classifyFileLayer(b.name));
+
   const seenHashes = new Set();
   const seenFingerprints = [];
   const digest = [];
 
-  for (const f of targetFiles) {
+  for (const f of sortedFiles) {
     try {
       const content = await readFileContent(path.join(dirPath, f.name));
       const paragraphs = extractRelevantParagraphs(f.name, content);
+      const layer = classifyFileLayer(f.name);
       const uniqueParagraphs = [];
 
       for (const para of paragraphs) {
@@ -116,7 +137,12 @@ export async function getLibraryDigest(dirPath, excludeNames = []) {
         if (seenHashes.has(hash)) continue;
 
         const fingerprint = fingerprintParagraph(para);
-        if (!isNovelFingerprint(fingerprint, seenFingerprints)) continue;
+        // Layer 2 files use a stricter (lower) similarity threshold: blocks that are >65% similar
+        // to already-seen content are suppressed. Layer 0/1 use the standard threshold.
+        const novel = layer === 2
+          ? isNovelFingerprintStrict(fingerprint, seenFingerprints)
+          : isNovelFingerprint(fingerprint, seenFingerprints);
+        if (!novel) continue;
 
         seenHashes.add(hash);
         seenFingerprints.push(fingerprint);
@@ -272,10 +298,20 @@ function splitParagraphs(text) {
       continue;
     }
 
-    if (kind === 'bullet' || kind === 'timeline') {
+    if (kind === 'bullet') {
       flush();
       current = [cleaned];
       currentKind = kind;
+      continue;
+    }
+
+    // Bug fix: timeline lines (e.g. "Microsoft | Sr PM | 2022-2025") are emitted as standalone
+    // paragraphs — like headings — so that the achievement lines that follow them in
+    // no-blank-line formatted files become independent blocks and can be deduplicated
+    // across different resume versions that share the same employer/date header.
+    if (kind === 'timeline') {
+      flush();
+      paragraphs.push(cleaned);
       continue;
     }
 
@@ -290,7 +326,12 @@ function splitParagraphs(text) {
       continue;
     }
 
-    if (shouldStartNewBlock(cleaned, current)) {
+    // Flush when the accumulated text is already a self-contained sentence (>=80 chars).
+    // This keeps shared career facts as standalone blocks so they can be deduplicated
+    // even when adjacent lines differ between resume versions (e.g. PDF-extracted content
+    // with no blank-line separators).
+    const currentText = current.join(' ');
+    if (currentText.length >= 80 || shouldStartNewBlock(cleaned, current)) {
       flush();
     }
     current.push(cleaned);
@@ -332,6 +373,67 @@ function isNovelFingerprint(candidate, seenFingerprints) {
     if (similarity(candidate.tokens, existing.tokens) >= threshold) return false;
   }
   return true;
+}
+
+/**
+ * Stricter variant used for Layer 2 (dated delivery-version) files.
+ * Suppresses blocks that are >=65% similar to already-seen content, catching
+ * rephrased versions of the same career fact across multiple tailored resumes.
+ */
+function isNovelFingerprintStrict(candidate, seenFingerprints) {
+  if (!candidate.value) return false;
+  if (candidate.tokens.length < 4) {
+    return !seenFingerprints.some(existing => existing.value === candidate.value);
+  }
+  for (const existing of seenFingerprints) {
+    if (!existing.value) continue;
+    if (candidate.value === existing.value) return false;
+    const maxTokens = Math.max(candidate.tokens.length, existing.tokens.length);
+    if (maxTokens === 0) return false;
+    // Wider gap tolerance (0.55) and lower similarity threshold (0.65) vs standard (0.45 / 0.82).
+    const tokenGap = Math.abs(candidate.tokens.length - existing.tokens.length) / maxTokens;
+    if (tokenGap > 0.55) continue;
+    const threshold = maxTokens >= 12 ? 0.65 : maxTokens >= 8 ? 0.72 : 0.82;
+    if (similarity(candidate.tokens, existing.tokens) >= threshold) return false;
+  }
+  return true;
+}
+
+/**
+ * Classify a file into a processing layer:
+ *  0 — full-preserve original materials (Essay / PRD / Spec / 项目经历)
+ *      → always processed first; never suppressed by strict dedup
+ *  1 — base resumes / cover letters without a dated-delivery suffix
+ *      → processed second with standard dedup threshold
+ *  2 — dated delivery versions (filename contains YYYY-MM, YYYY-MM-DD, MMDD suffix,
+ *      or a company/role qualifier appended to a base resume/cover-letter name)
+ *      → processed last with strict dedup; only genuinely novel blocks survive
+ *
+ * @param {string} fileName
+ * @returns {0|1|2}
+ */
+function classifyFileLayer(fileName) {
+  const name = String(fileName || '').trim();
+  if (FULL_PRESERVE_FILE_NAME_PATTERNS.some(p => p.test(name))) return 0;
+  // Full YYYY-MM or YYYY-MM-DD date in filename → always a dated delivery version.
+  if (DATED_DELIVERY_FILE_PATTERN.test(name)) return 2;
+  // 4-digit MMDD suffix (e.g. WuKun_SWPM_CV_0102.docx) → dated delivery version.
+  if (MMDD_SUFFIX_PATTERN.test(name)) return 2;
+  // resume/cv/cover-letter file with a company/role qualifier → targeted delivery version.
+  // E.g. resume_wukun_deepseek_agent.txt, cover_letter_wukun_kairos.txt
+  const nameLower = name.toLowerCase().replace(/\.[^.]+$/, '');
+  const isCoverLetter = /^cover[_\s-]?letter|^求职信/.test(nameLower);
+  const isResumeFamily = isCoverLetter
+    || /^(?:resume|cv|简历)/.test(nameLower)
+    || /(?:resume|cv)$/.test(nameLower);
+  if (isResumeFamily) {
+    const tokens = nameLower.split(/[-_\s]+/).filter(Boolean);
+    const nonAuthorTokens = tokens.filter(t => !/^(?:wukun|wu|kun|resume|cv|cover|letter|简历|求职信|s|short|cn|zh|en)$/.test(t));
+    // Cover letters with 1+ qualifier are targeted; resumes need 2+ to avoid false positives.
+    const required = isCoverLetter ? 1 : 2;
+    if (nonAuthorTokens.length >= required) return 2;
+  }
+  return 1;
 }
 
 function similarity(aTokens, bTokens) {

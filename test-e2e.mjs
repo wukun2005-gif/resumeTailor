@@ -457,6 +457,77 @@ async function testFileRoutesAndDigest() {
   log('/library-digest near-duplicate paragraphs merged', repeatCount === 1, `repeatCount=${repeatCount}`);
 }
 
+/**
+ * Regression for Bug 2: shared career facts must be deduplicated even in files that have
+ * no blank-line separators between consecutive content lines (e.g. PDF-extracted resumes).
+ */
+async function testDigestNoBlanksDedup() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-noblank-'));
+  const sharedFact = 'Improved Azure ASR model WER by 20% leading the SpeechIO leaderboard globally.';
+
+  // Both files have the same sharedFact but no blank lines between consecutive content lines.
+  await fs.writeFile(path.join(dir, 'resume_base.txt'), [
+    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
+    sharedFact,
+    'Nokia | PM | 2015-03 - 2022-01',
+    'Led global imaging platform delivery.',
+  ].join('\n'), 'utf-8');
+  await fs.writeFile(path.join(dir, 'resume_variant.txt'), [
+    'Microsoft | Senior PM | 2022-01 - 2025-01',
+    sharedFact,
+    'Nokia | Program Manager | 2015-03 - 2022-01',
+    'Managed cross-functional Nokia camera delivery.',
+  ].join('\n'), 'utf-8');
+
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  const flattened = data.digest.map(item => item.content).join('\n');
+  const count = (flattened.match(new RegExp(sharedFact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+  log('/library-digest no-blank-line: shared career fact deduplicated', count === 1, `count=${count}`);
+}
+
+/**
+ * Regression for Plan B layered dedup: a rephrased career fact in a dated delivery-version
+ * file should be suppressed (merged with the base-resume version), but a genuinely new
+ * fact in the same delivery file must survive.
+ */
+async function testDigestLayeredDedup() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-layerb-'));
+  const baseFact = 'Drove end-to-end Copilot RAG search relevance improvements, increasing NDCG by 10%.';
+  const newFact = 'Invented a novel multi-modal evaluation pipeline reducing annotation cost by 40%.';
+
+  // Layer 1: base resume (no date in filename)
+  await fs.writeFile(path.join(dir, 'resume_wukun.txt'), [
+    'Senior Program Manager with 15+ years of experience.',
+    '',
+    'Microsoft | Senior PM | 2022-01 - 2025-01',
+    '',
+    baseFact,
+  ].join('\n'), 'utf-8');
+
+  // Layer 2: dated delivery version — rephrased baseFact + a genuinely new fact
+  await fs.writeFile(path.join(dir, 'Wu - Resume - Canva - 2026-04-05.txt'), [
+    'Senior Technical Program Manager with 15 years of experience.',
+    '',
+    'Microsoft | Sr PM | 2022-01 - 2025-01',
+    '',
+    'Led end-to-end Copilot RAG relevance project, raising NDCG score by 10%.',
+    '',
+    newFact,
+  ].join('\n'), 'utf-8');
+
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  const flattened = data.digest.map(item => item.content).join('\n');
+  const ndcgCount = (flattened.match(/NDCG.*10%/gi) || []).length;
+  log('/library-digest layered: rephrased delivery-version fact suppressed to 1 copy', ndcgCount === 1, `ndcgCount=${ndcgCount}`);
+  log('/library-digest layered: genuinely new fact in delivery version survives', flattened.includes(newFact), newFact);
+}
+
 async function testMockJdImageOcr() {
   const res = await postJSON('/ocr-jd-images', {
     model: MODEL,
@@ -695,6 +766,8 @@ async function main() {
     await testListModels();
     await testListModelsWithInputKeyOverride();
     await testFileRoutesAndDigest();
+    await testDigestNoBlanksDedup();
+    await testDigestLayeredDedup();
     await testMockJdImageOcr();
     await testJdImageOcrValidation();
     await testJdImageOcrInvalidModel();
