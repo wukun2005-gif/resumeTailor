@@ -299,7 +299,7 @@ function clearWorkspaceState() {
   els.htmlChatHistory.innerHTML = '';
 
   if (els.jdImageUpload) els.jdImageUpload.value = '';
-  if (els.jdImageUseAi) els.jdImageUseAi.checked = false;
+  if (els.jdImageUseAi) els.jdImageUseAi.checked = true;
   if (els.htmlPdfUpload) els.htmlPdfUpload.value = '';
 
   chatMessages = [];
@@ -687,7 +687,7 @@ async function restoreState() {
   els.genInstructions.value = state.get('genInstructions');
   els.htmlInstructions.value = state.get('htmlInstructions');
   els.mockMode.checked = state.get('mockMode', false);
-  if (els.jdImageUseAi) els.jdImageUseAi.checked = state.get('jdImageUseAi', false);
+  if (els.jdImageUseAi) els.jdImageUseAi.checked = state.get('jdImageUseAi', true);
 
   // Restore PII config
   els.cfgPiiEnabled.checked = state.get('piiEnabled', false);

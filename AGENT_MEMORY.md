@@ -40,3 +40,4 @@
   - 更新了 `DESIGN.md` 与 `README.md` 的相关小节及 Change Log。
   - 验证了后端 API 的 mock 模式与真实 API OCR 路径。
   - 清理了构建产物 `dist/` 与临时测试脚本。
+  - **新需求**: 将“直接用 AI 识别”设为默认开启。

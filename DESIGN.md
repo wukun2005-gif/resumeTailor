@@ -1166,6 +1166,7 @@ Mock 数据包含：
     - 重构 `performAiJdOcr()` 为可复用函数。
     - 优化 `handleJdImageUploadWithLocal()`，在本地 OCR 评分较低时自动提示 AI 补救。
     - 实现 `retryJdImageWithAi()`，允许用户一键用 AI 改进现有本地 OCR 结果。
+    - **新变更**：将“直接用 AI 识别”设为默认开启。
 - `test-e2e.mjs` — 新增 `/ocr-jd-images` 路由的 Mock、参数验证及 Real Smoke 自动化测试用例。
 - `AGENT_MEMORY.md` — 记录任务完成状态。
 
