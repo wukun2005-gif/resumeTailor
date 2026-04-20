@@ -60,7 +60,7 @@ const els = {
   cfgAgentOrchestrator: $('cfgAgentOrchestrator'), cfgAgentGenerator: $('cfgAgentGenerator'),
   cfgAgentReviewers: $('cfgAgentReviewers'), cfgAgentHtml: $('cfgAgentHtml'),
   jdInput: $('jdInput'), libraryPath: $('libraryPath'), browseLibraryBtn: $('browseLibraryBtn'), loadLibraryBtn: $('loadLibraryBtn'), exportDigestBtn: $('exportDigestBtn'), exportDigestStatus: $('exportDigestStatus'), baseResumeSelect: $('baseResumeSelect'),
-  jdImageUpload: $('jdImageUpload'), jdImageStatus: $('jdImageStatus'), jdImageAiRetryBtn: $('jdImageAiRetryBtn'), jdImageQualityHint: $('jdImageQualityHint'),
+  jdImageUpload: $('jdImageUpload'), jdImageUseAi: $('jdImageUseAi'), jdImageStatus: $('jdImageStatus'), jdImageAiRetryBtn: $('jdImageAiRetryBtn'), jdImageQualityHint: $('jdImageQualityHint'),
   manualResumeRow: $('manualResumeRow'), manualResumeInput: $('manualResumeInput'),
   genInstructions: $('genInstructions'), htmlInstructions: $('htmlInstructions'), generateCoverLetter: $('generateCoverLetter'),
   generateBtn: $('generateBtn'), outputSection: $('outputSection'),
@@ -299,6 +299,7 @@ function clearWorkspaceState() {
   els.htmlChatHistory.innerHTML = '';
 
   if (els.jdImageUpload) els.jdImageUpload.value = '';
+  if (els.jdImageUseAi) els.jdImageUseAi.checked = false;
   if (els.htmlPdfUpload) els.htmlPdfUpload.value = '';
 
   chatMessages = [];
@@ -686,6 +687,7 @@ async function restoreState() {
   els.genInstructions.value = state.get('genInstructions');
   els.htmlInstructions.value = state.get('htmlInstructions');
   els.mockMode.checked = state.get('mockMode', false);
+  if (els.jdImageUseAi) els.jdImageUseAi.checked = state.get('jdImageUseAi', false);
 
   // Restore PII config
   els.cfgPiiEnabled.checked = state.get('piiEnabled', false);
@@ -726,6 +728,11 @@ function bindEvents() {
   els.generateBtn.addEventListener('click', doGenerate);
   els.regenerateBtn.addEventListener('click', doGenerate);
   els.jdImageUpload.addEventListener('change', handleJdImageUpload);
+  if (els.jdImageUseAi) {
+    els.jdImageUseAi.addEventListener('change', () => {
+      state.set('jdImageUseAi', els.jdImageUseAi.checked);
+    });
+  }
   els.jdImageAiRetryBtn.addEventListener('click', retryJdImageWithAi);
   els.saveResumeBtn.addEventListener('click', showSaveDialog);
   els.confirmSaveBtn.addEventListener('click', doSave);
@@ -880,12 +887,21 @@ async function handleJdImageUpload(e) {
   jdImageLastBatch = { files, localText: '', appliedText: '', quality: null, aiUsed: false };
   updateJdAiRetryVisibility(false);
   setJdImageQualityHint('');
-  setJdImageStatus(`准备识别 ${files.length} 张 JD 图片...`);
+  
+  if (els.jdImageUseAi && els.jdImageUseAi.checked) {
+    await handleJdImageUploadWithAi(files);
+  } else {
+    await handleJdImageUploadWithLocal(files);
+  }
+}
+
+async function handleJdImageUploadWithLocal(files) {
+  setJdImageStatus(`准备本地识别 ${files.length} 张 JD 图片...`);
 
   try {
     const worker = await getJdOcrWorker(msg => {
       if (msg.status === 'recognizing text') {
-        setJdImageStatus(`图片 OCR 中... ${Math.round((msg.progress || 0) * 100)}%`);
+        setJdImageStatus(`本地 OCR 中... ${Math.round((msg.progress || 0) * 100)}%`);
       } else if (msg.status === 'loading language traineddata') {
         setJdImageStatus('首次识别，正在下载本地 OCR 语言包...');
       }
@@ -893,7 +909,7 @@ async function handleJdImageUpload(e) {
 
     const sections = [];
     for (let i = 0; i < files.length; i++) {
-      setJdImageStatus(`正在识别第 ${i + 1}/${files.length} 张图片...`);
+      setJdImageStatus(`正在本地识别第 ${i + 1}/${files.length} 张图片...`);
       const canvas = await preprocessJdImage(files[i]);
       const { data } = await worker.recognize(canvas, { rotateAuto: true });
       const text = normalizeOcrText(data.text);
@@ -920,7 +936,7 @@ async function handleJdImageUpload(e) {
       return;
     }
 
-    setJdImageStatus(`已从 ${files.length} 张图片提取 JD 文本，并追加到输入框`, 'success');
+    setJdImageStatus(`已通过本地 OCR 提取 JD 文本，并追加到输入框`, 'success');
     if (jdImageLastBatch.quality.weak) {
       const canRetry = canUseAiJdOcr();
       setJdImageQualityHint(canRetry
@@ -931,10 +947,46 @@ async function handleJdImageUpload(e) {
       setJdImageQualityHint('本地 OCR 结果质量较好，建议快速检查后直接使用。');
     }
   } catch (err) {
-    setJdImageStatus(`图片识别失败: ${err.message}`, 'error');
+    setJdImageStatus(`本地识别失败: ${err.message}`, 'error');
     setJdImageQualityHint('本地 OCR 未完成。你可以重新上传图片，或在配置好 Format Converter 后尝试“用 AI 改进识别”。', 'error');
     updateJdAiRetryVisibility(canUseAiJdOcr());
   }
+}
+
+async function handleJdImageUploadWithAi(files) {
+  try {
+    const model = requireConfiguredConnection(getHtmlModelId(), 'Format Converter');
+    setJdImageStatus(`正在调用 AI (${model}) 识别 ${files.length} 张 JD 图片...`);
+    
+    const result = await performAiJdOcr(model, files);
+    const text = result.text;
+
+    appendJdText(text);
+    jdImageLastBatch.appliedText = text;
+    jdImageLastBatch.aiUsed = true;
+    jdImageLastBatch.quality = evaluateJdOcrQuality(text);
+    jdInfo = null;
+    updateGenerateBtn();
+    persistDraftState(true);
+
+    setJdImageStatus(`已通过 AI 识别 ${files.length} 张图片，并追加到 JD 输入框`, 'success');
+    setJdImageQualityHint('已使用 AI 识别图片；后续生成/评审仍只使用 JD 文本，不会重复发送图片。');
+    updateJdAiRetryVisibility(false);
+  } catch (err) {
+    setJdImageStatus(`AI 识别失败: ${err.message}`, 'error');
+    setJdImageQualityHint('AI 识别遇到问题。你可以尝试切换回本地识别，或检查 API 配置。', 'error');
+    // If AI fails upfront, we don't automatically fall back to local as per user's "AI already exists" hint, 
+    // but we allow the user to try again or use the retry button if they switch modes.
+    updateJdAiRetryVisibility(true);
+  }
+}
+
+async function performAiJdOcr(model, files) {
+  const images = await Promise.all(files.map(fileToBase64Payload));
+  const result = await api.ocrJdImages(model, images, els.mockMode.checked);
+  const text = normalizeOcrText(result.text);
+  if (!text) throw new Error('AI 未返回有效 JD 文本');
+  return { text, usage: result.usage, model };
 }
 
 async function retryJdImageWithAi() {
@@ -943,10 +995,9 @@ async function retryJdImageWithAi() {
     const model = requireConfiguredConnection(getHtmlModelId(), 'Format Converter');
     els.jdImageAiRetryBtn.disabled = true;
     setJdImageStatus('正在用 AI 改进图片识别结果...');
-    const images = await Promise.all(jdImageLastBatch.files.map(fileToBase64Payload));
-    const result = await api.ocrJdImages(model, images, els.mockMode.checked);
-    const text = normalizeOcrText(result.text);
-    if (!text) throw new Error('AI 未返回有效 JD 文本');
+    
+    const result = await performAiJdOcr(model, jdImageLastBatch.files);
+    const text = result.text;
 
     const replaced = replaceLastAppendedJdText(jdImageLastBatch.appliedText, text);
     jdImageLastBatch.appliedText = text;

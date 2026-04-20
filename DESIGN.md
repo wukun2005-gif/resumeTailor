@@ -319,29 +319,28 @@ data: {"type":"done"}
 
 设计原则：
 
-- **默认本地 OCR**：图片先在浏览器端做预处理和 OCR，不消耗 AI token
-- **文本仍是唯一真源**：OCR 结果被追加写入 `jdInput`，后续 `/extract-jd-info`、`/generate`、`/review`、`/apply-review` 等全部继续只消费 JD 文本
-- **AI 仅做兜底**：当本地 OCR 质量差，且用户主动点击“用 AI 改进识别”时，才调用 `Format Converter` 执行一次性 AI OCR 兜底
+- **本地识别优先或 AI 直接识别**：用户可选择“直接用 AI 识别”；若未勾选，图片先在浏览器端做本地 OCR（不消耗 Token），质量不佳时再提供 AI 补救按钮。
+- **文本仍是唯一真源**：无论是本地还是 AI 识别，结果最终都被追加/替换到 `jdInput` 中，后续流程仅消费 JD 文本。
+- **AI 角色复用**：AI 识别（包括直接识别和补救识别）均调用 `Format Converter` 角色分配的模型（通常是 Gemini）。
 
 前端流程：
 
-1. 用户选择多张 JD 图片
-2. 前端按上传顺序逐张预处理（缩放、灰度/二值化）
-3. 使用浏览器端 OCR 提取文本
-4. 将净化后的 JD 纯文本**追加**到 `jdInput`
-5. 本地质量检查：
-   - 文本长度
-   - JD 关键词命中（职责 / 要求 / 任职等）
-   - 异常字符比例
-6. 质量差时显示提示；若已配置 `Format Converter`，展示“用 AI 改进识别”按钮
+1. 用户选择多张 JD 图片。
+2. 系统检查“直接用 AI 识别”勾选状态：
+   - **若勾选**：直接将图片发送至后端 `/api/ocr-jd-images`，调用 `Format Converter` 进行识别。
+   - **若未勾选**：
+     - 前端按上传顺序逐张预处理（缩放、灰度/二值化）。
+     - 使用浏览器端 Tesseract.js 提取文本。
+     - 将文本追加到 `jdInput`。
+     - 执行本地质量检查（长度、关键词命中、异常字符）。
+     - 质量差时展示“用 AI 改进识别”按钮。
+3. 识别结果追加到 `jdInput`。
 
-AI 兜底：
-
+AI 兜底与补救：
 - 路由：`POST /api/ocr-jd-images`
-- Agent：复用 `Format Converter`
-- 输入：图片数组
+- 输入：图片数组（base64）
 - 输出：整理后的 JD 纯文本
-- 只在用户主动触发时调用一次；生成、评审等主流程不会重复发送这些图片
+- 状态：仅在初始勾选 AI 或后续补救时调用，主流程不重复发送图片。
 
 JD 输入框中只保留最终的 JD 纯文本，不写入批次号、图片文件名或其他技术分隔符，因此不会额外污染 prompt，也不会为这些辅助标记消耗 token。
 
@@ -576,6 +575,7 @@ Mock 数据包含：
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-04-20 | JD 图片上传增加“直接用 AI 识别”选项 | UI/功能增强 | [Antigravity] |
 | 2026-04-18 | 简历素材库智能去重优化（方案B） | 核心算法优化 | 0219b420a449e534e2cd965e8af16c33ac301b2d |
 
 
@@ -1154,3 +1154,18 @@ Mock 数据包含：
 - 仿真测试模式
 - 自动保存生成的简历到素材库
 - JD 自动解析命名
+
+### 2026-04-20 — 添加 JD 图片 AI 识别功能
+
+**概述**：在原有本地 Tesseract OCR 基础上，增加显式的 AI OCR 选项，并在本地 OCR 质量不佳时提供 AI 补救能力。
+
+**修改文件**：
+- `index.html` — 在 JD 上传按钮旁新增“直接用 AI 识别”勾选框。
+- `src/main.js` — 
+    - 实现 `handleJdImageUploadWithAi()`，直接调用 Format Converter 进行多模态识别。
+    - 重构 `performAiJdOcr()` 为可复用函数。
+    - 优化 `handleJdImageUploadWithLocal()`，在本地 OCR 评分较低时自动提示 AI 补救。
+    - 实现 `retryJdImageWithAi()`，允许用户一键用 AI 改进现有本地 OCR 结果。
+- `test-e2e.mjs` — 新增 `/ocr-jd-images` 路由的 Mock、参数验证及 Real Smoke 自动化测试用例。
+- `AGENT_MEMORY.md` — 记录任务完成状态。
+
