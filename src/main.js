@@ -62,7 +62,7 @@ const els = {
   jdInput: $('jdInput'), libraryPath: $('libraryPath'), browseLibraryBtn: $('browseLibraryBtn'), loadLibraryBtn: $('loadLibraryBtn'), exportDigestBtn: $('exportDigestBtn'), exportDigestStatus: $('exportDigestStatus'), baseResumeSelect: $('baseResumeSelect'),
   jdImageUpload: $('jdImageUpload'), jdImageUseAi: $('jdImageUseAi'), jdImageStatus: $('jdImageStatus'), jdImageAiRetryBtn: $('jdImageAiRetryBtn'), jdImageQualityHint: $('jdImageQualityHint'),
   manualResumeRow: $('manualResumeRow'), manualResumeInput: $('manualResumeInput'),
-  genInstructions: $('genInstructions'), htmlInstructions: $('htmlInstructions'), generateCoverLetter: $('generateCoverLetter'),
+  genInstructions: $('genInstructions'), reviewInstructions: $('reviewInstructions'), htmlInstructions: $('htmlInstructions'), generateCoverLetter: $('generateCoverLetter'),
   generateBtn: $('generateBtn'), outputSection: $('outputSection'),
   resumeOutput: $('resumeOutput'), resumeStatus: $('resumeStatus'), resumeTokenInfo: $('resumeTokenInfo'),
   saveResumeBtn: $('saveResumeBtn'), regenerateBtn: $('regenerateBtn'),
@@ -685,6 +685,7 @@ async function restoreState() {
   // Restore non-connection settings
   els.libraryPath.value = state.get('libraryPath');
   els.genInstructions.value = state.get('genInstructions');
+  els.reviewInstructions.value = state.get('reviewInstructions');
   els.htmlInstructions.value = state.get('htmlInstructions');
   els.mockMode.checked = state.get('mockMode', false);
   if (els.jdImageUseAi) els.jdImageUseAi.checked = state.get('jdImageUseAi', true);
@@ -711,6 +712,7 @@ function restoreAgentAssignments() {
 function persistInputs() {
   state.set('libraryPath', els.libraryPath.value);
   state.set('genInstructions', els.genInstructions.value);
+  state.set('reviewInstructions', els.reviewInstructions.value);
   state.set('htmlInstructions', els.htmlInstructions.value);
   persistDraftState();
 }
@@ -763,6 +765,7 @@ function bindEvents() {
   els.resumeOutput.addEventListener('input', () => { onResumeEdited(); persistDraftState(); });
   els.reviewOutput.addEventListener('input', persistDraftState);
   els.genInstructions.addEventListener('change', persistInputs);
+  els.reviewInstructions.addEventListener('change', persistInputs);
   els.htmlInstructions.addEventListener('change', persistInputs);
   window.addEventListener('beforeunload', () => persistDraftState(true));
   document.addEventListener('visibilitychange', () => {
@@ -1592,6 +1595,7 @@ async function doReview() {
       updatedResume: resume,
       resumeLibrary: library,
       instructions: els.genInstructions.value,
+      reviewInstructions: els.reviewInstructions.value,
       previouslySubmitted,
     };
 

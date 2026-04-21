@@ -11,8 +11,37 @@
  */
 
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import os from 'os';
 import path from 'path';
+
+// Load .env file if GEMINI_KEY not already set
+function loadEnvFile() {
+  if (process.env.GEMINI_KEY) return; // Already set
+  
+  try {
+    const envPath = path.join(process.cwd(), '.env');
+    const envContent = fsSync.readFileSync(envPath, 'utf-8');
+    for (const line of envContent.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const [key, ...valueParts] = trimmed.split('=');
+      if (key === 'GEMINI_KEY') {
+        let value = valueParts.join('=');
+        // Remove quotes if present
+        if ((value.startsWith('"') && value.endsWith('"')) || 
+            (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.slice(1, -1);
+        }
+        process.env.GEMINI_KEY = value;
+        break;
+      }
+    }
+  } catch (err) {
+    // .env file not found or not readable, continue with existing env
+  }
+}
+loadEnvFile();
 
 const BASE = process.env.TEST_BASE || 'http://localhost:3001/api';
 const GEMINI_KEY = process.env.GEMINI_KEY;
@@ -724,11 +753,31 @@ async function testReview(generatedResume) {
     updatedResume: generatedResume || SAMPLE_RESUME,
     resumeLibrary: [],
     instructions: '',
+    reviewInstructions: '',
     previouslySubmitted: '',
   });
 
   log('/review has content', result.text.length > 200, `length=${result.text.length}`);
   log('/review has score-like output', /\d{1,3}/.test(result.text), result.text.slice(0, 120).replace(/\n/g, '\\n'));
+  return result.text;
+}
+
+async function testReviewWithInstructions(generatedResume) {
+  const result = await postSSEWithRetry('/review', {
+    model: MODEL,
+    jd: SAMPLE_JD,
+    baseResume: SAMPLE_RESUME,
+    updatedResume: generatedResume || SAMPLE_RESUME,
+    resumeLibrary: [],
+    instructions: '',
+    reviewInstructions: '请特别关注Summary部分是否足够精炼。',
+    previouslySubmitted: '',
+  });
+
+  log('/review with reviewInstructions has content', result.text.length > 200, `length=${result.text.length}`);
+  // The reviewInstructions should influence the output to mention Summary
+  const mentionsSummary = result.text.includes('Summary') || result.text.includes('summary') || result.text.includes('总结');
+  log('/review with reviewInstructions follows instruction', mentionsSummary, 'output mentions Summary');
   return result.text;
 }
 
@@ -741,6 +790,7 @@ async function testReviewMulti(generatedResume) {
     updatedResume: generatedResume || SAMPLE_RESUME,
     resumeLibrary: [],
     instructions: '',
+    reviewInstructions: '',
     previouslySubmitted: '',
   });
 
@@ -832,6 +882,7 @@ async function testPiiReview(generatedResume) {
     updatedResume: generatedResume,
     resumeLibrary: [],
     instructions: '',
+    reviewInstructions: '',
     previouslySubmitted: '',
   });
 
@@ -887,6 +938,8 @@ async function main() {
     await testGenerateNoNotes();
     await delay(RATE_LIMIT_DELAY);
     const review = await testReview(generated);
+    await delay(RATE_LIMIT_DELAY);
+    await testReviewWithInstructions(generated);
     await delay(RATE_LIMIT_DELAY);
     await testReviewMulti(generated);
     await delay(RATE_LIMIT_DELAY);

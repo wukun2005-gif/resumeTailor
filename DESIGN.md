@@ -231,6 +231,7 @@ data: {"type":"done"}
 | `htmlModel` | Format Converter 的 connection ID | 否 |
 | `libraryPath` | 简历素材库绝对路径 | 否 |
 | `genInstructions` | 生成简历的 prompt 指令 | 否 |
+| `reviewInstructions` | 评审简历的 prompt 指令 | 否 |
 | `htmlInstructions` | HTML 转换的 prompt 指令 | 否 |
 | `mockMode` | 仿真模式开关 | 否 |
 
@@ -250,6 +251,7 @@ data: {"type":"done"}
 ### 7.2 `getReviewPrompt`
 - 动态检测 `updatedResume` 是否包含「求职信」，有则追加求职信评审格式要求
 - 评审要点：事实一致性、篇幅、关键词堆砌、深度、诚实度、数字一致性
+- 用户可通过独立"评审指令"输入框自定义评审要求，prompt 中以"评审指令（用户自定义要求）"段落注入
 
 ### 7.3 `getReviewMergePrompt`
 - 用于多 Reviewer 场景：多个模型并行评审后，由内部编排层默认复用首个 Reviewer 模型合并评审意见
@@ -575,6 +577,7 @@ Mock 数据包含：
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-04-21 | 新增"评审指令"输入区，支持自定义评审要求 | UI/功能增强 | - |
 | 2026-04-20 | JD 图片上传增加"直接用 AI 识别"选项 | UI/功能增强 | [Antigravity] |
 | 2026-04-18 | 简历素材库智能去重优化（方案B）：分层去重策略，显著减少 token 消耗 | 核心算法优化 | 0219b420 |
 | 2026-04-15 | 素材库 digest 修复：缓存版本更新、JD 过滤漏洞修复 | 数据处理修复 | - |

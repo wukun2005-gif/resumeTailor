@@ -65,10 +65,10 @@ ${generateCoverLetter ? '\n===== 求职信正文 =====\n（求职信内容，不
   return { system: GENERATION_SYSTEM, user, userBlocks };
 }
 
-export function getReviewPrompt({ jd, originalResume, updatedResume, resumeLibrary, instructions, previouslySubmitted }) {
+export function getReviewPrompt({ jd, originalResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted }) {
   const hasCoverLetter = updatedResume.includes('求职信');
-  // Block 1 (dynamic): review criteria + JD + resumes
-  let mainBlock = `评审要点：
+  // Build review criteria with optional reviewInstructions
+  let reviewCriteriaSection = `评审要点：
 - 更新的简历也许有和原始事实简历不一致的地方，列出不一致之处让候选人确认
 - 篇幅是否控制在2页A4纸
 - 是否有JD关键词堆砌(Keyword Stuffing)
@@ -76,7 +76,11 @@ export function getReviewPrompt({ jd, originalResume, updatedResume, resumeLibra
 - 是否诚实真实，是否有过度包装
 - Summary的强度是否超过经历能承载的上限
 - 数字一致性
-${previouslySubmitted ? '- 跨投递一致性：与已投递同公司简历对比，检查是否存在事实冲突（Title、时间线、项目、数据不一致），检查职业目标是否矛盾' : ''}
+${previouslySubmitted ? '- 跨投递一致性：与已投递同公司简历对比，检查是否存在事实冲突（Title、时间线、项目、数据不一致），检查职业目标是否矛盾' : ''}`;
+  
+  // Block 1 (dynamic): review criteria + JD + resumes
+  let mainBlock = `${reviewCriteriaSection}
+${reviewInstructions ? `\n===== 评审指令（用户自定义要求）=====\n${reviewInstructions}` : ''}
 
 请按以下格式输出（每个section不超过8条，不要逐行改写简历原文）：
 
@@ -130,15 +134,15 @@ ${updatedResume}
   return { system: REVIEW_SYSTEM, user, userBlocks };
 }
 
-export function getReviewPromptConcise({ jd, originalResume, updatedResume, resumeLibrary, instructions, previouslySubmitted }) {
+export function getReviewPromptConcise({ jd, originalResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted }) {
   const hasCoverLetter = updatedResume.includes('求职信');
-  // Block 1 (dynamic): concise review criteria + JD + resumes
-  let mainBlock = `请简要评审以下简历，只需输出：
+  // Build concise review criteria with optional reviewInstructions
+  let conciseCriteriaSection = `请简要评审以下简历，只需输出：
 1. 评分(0-100)
 2. 主要问题（最多5条，每条一句话）
 3. 修改建议（最多5条，每条一句话）
 ${previouslySubmitted ? '4. 跨投递一致性问题（如有）' : ''}
-${hasCoverLetter ? '5. 求职信评分及主要问题（最多3条）' : ''}
+${hasCoverLetter ? '5. 求职信评分及主要问题（最多3条）' : ''}${reviewInstructions ? `\n\n===== 评审指令（用户自定义要求）=====\n${reviewInstructions}` : ''}
 
 ===== JD =====
 ${jd}
@@ -168,9 +172,9 @@ ${updatedResume}
     previouslyBlock = `\n===== 已投递同公司简历/求职信（评审必须检查跨投递一致性）=====\n${previouslySubmitted}\n`;
   }
 
-  const user = mainBlock + libraryBlock + instructionsBlock + previouslyBlock;
+  const user = conciseCriteriaSection + libraryBlock + instructionsBlock + previouslyBlock;
 
-  const userBlocks = [{ text: mainBlock }];
+  const userBlocks = [{ text: conciseCriteriaSection }];
   if (libraryBlock) userBlocks.push({ text: libraryBlock, cache: true });
   if (instructionsBlock) userBlocks.push({ text: instructionsBlock });
   if (previouslyBlock) userBlocks.push({ text: previouslyBlock, cache: true });

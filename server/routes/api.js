@@ -338,9 +338,9 @@ router.post('/review', async (req, res) => {
       sanitizeRequestBody(req.body, ['jd', 'baseResume', 'updatedResume', 'instructions', 'previouslySubmitted'], piiEntries);
       sanitizeLibrary(req.body.resumeLibrary, piiEntries);
     }
-    const { model, jd, baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted } = req.body;
+    const { model, jd, baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted } = req.body;
     const caller = getModelCaller(model);
-    const { system, user, userBlocks } = getReviewPrompt({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted });
+    const { system, user, userBlocks } = getReviewPrompt({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted });
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
     const result = await caller(user, onChunk, { system, maxTokens: 6144, userBlocks });
@@ -365,8 +365,8 @@ router.post('/review-multi', async (req, res) => {
       sanitizeRequestBody(req.body, ['jd', 'baseResume', 'updatedResume', 'instructions', 'previouslySubmitted'], piiEntries);
       sanitizeLibrary(req.body.resumeLibrary, piiEntries);
     }
-    const { models, orchestratorModel, jd, baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted } = req.body;
-    const { system, user, userBlocks } = getReviewPromptConcise({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, previouslySubmitted });
+    const { models, orchestratorModel, jd, baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted } = req.body;
+    const { system, user, userBlocks } = getReviewPromptConcise({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted });
 
     // Run all reviewers in parallel (concise format, no SSE streaming for individual results)
     sendSSE(res, { type: 'chunk', text: '正在并行调用多个评审模型...\n\n' });
