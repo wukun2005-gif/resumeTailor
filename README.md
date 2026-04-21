@@ -424,10 +424,9 @@ flowchart TD
 - **自动切换策略**：配额错误等待5秒后重试，其他错误等待15秒后重试
 - **成功恢复**：成功调用后重置模型索引，优先使用高性能模型
 - **模型优先级配置**：
-  1. **最优先级**（速度极快、配额最高）：gemini-3.1-flash-lite-preview、gemini-2.5-flash-lite、gemini-2.0-flash-lite
-  2. **综合能力最强**：gemini-3-flash-preview、gemini-2.5-flash、gemini-2.0-flash  
-  3. **高级能力**（配额较低）：gemini-3.1-pro-preview、gemini-3-pro-preview、gemini-2.5-pro
-------- REPLACE
+   1. **最优先级**（速度极快、配额最高）：gemini-3.1-flash-lite-preview、gemini-2.5-flash-lite、gemini-2.0-flash-lite
+   2. **综合能力最强**：gemini-3-flash-preview、gemini-2.5-flash、gemini-2.0-flash
+   3. **高级能力**（配额较低）：gemini-3.1-pro-preview、gemini-3-pro-preview、gemini-2.5-pro
 '''
 
 **差分匹配三层容错的设计意义**：AI输出的修改指令（"把A改成B"）中的"A"经常和原文有微小差异（多余空格、换行不一致等）。三层匹配确保即使AI不够精确，修改也不会静默丢失：
