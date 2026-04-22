@@ -339,6 +339,10 @@
         <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
           <button id="generateHtmlBtn" class="btn-primary" disabled>生成排版并保存为PDF</button>
           <div style="display:flex;gap:8px;align-items:center;">
+            <button id="openPdfBtn" class="btn-secondary btn-sm" style="display:none">
+              打开 PDF
+            </button>
+            <input type="file" id="openPdfFileInput" accept=".pdf" style="display:none">
             <span id="htmlTokenInfo" style="font-size:0.8rem;color:#666;white-space:nowrap;"></span>
             <span id="htmlStatus" class="status-text"></span>
           </div>

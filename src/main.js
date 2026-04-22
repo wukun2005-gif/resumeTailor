@@ -75,6 +75,7 @@ const els = {
   generateHtmlBtn: $('generateHtmlBtn'), htmlStatus: $('htmlStatus'),
   htmlChatSection: $('htmlChatSection'), htmlChatHistory: $('htmlChatHistory'), htmlChatInput: $('htmlChatInput'), htmlChatSendBtn: $('htmlChatSendBtn'),
   htmlPdfUpload: $('htmlPdfUpload'), htmlUploadStatus: $('htmlUploadStatus'), htmlTokenInfo: $('htmlTokenInfo'),
+  openPdfBtn: $('openPdfBtn'), openPdfFileInput: $('openPdfFileInput'),
   sessionTotalInfo: $('sessionTotalInfo'),
   // PII config
   cfgPiiEnabled: $('cfgPiiEnabled'),
@@ -749,6 +750,27 @@ function bindEvents() {
   els.htmlChatSendBtn.addEventListener('click', doHtmlChat);
   els.htmlChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doHtmlChat(); } });
   els.htmlPdfUpload.addEventListener('change', handlePdfUpload);
+  els.openPdfBtn.addEventListener('click', (e) => {
+    console.log('openPdfBtn click event fired');
+    console.log('Button element:', els.openPdfBtn);
+    console.log('File input element:', els.openPdfFileInput);
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!els.openPdfFileInput) {
+      console.error('openPdfFileInput is null or undefined!');
+      return;
+    }
+    
+    console.log('Triggering file input click...');
+    try {
+      els.openPdfFileInput.click();
+      console.log('File input click triggered');
+    } catch (error) {
+      console.error('Error triggering file input click:', error);
+    }
+  });
+  els.openPdfFileInput.addEventListener('change', handleOpenPdf);
   els.mockMode.addEventListener('change', () => { state.set('mockMode', els.mockMode.checked); updateGenerateBtn(); });
   const geminiQueryBtn = document.getElementById('geminiQueryModelsBtn');
   if (geminiQueryBtn) geminiQueryBtn.addEventListener('click', fetchGeminiModels);
@@ -2080,6 +2102,13 @@ async function doGenerateHtml() {
     els.htmlStatus.textContent = '完成，已弹出保存为PDF的窗口';
     els.htmlStatus.className = 'status-text success';
 
+    // Show "Open PDF" button
+    console.log('Showing openPdfBtn');
+    console.log('Button element exists:', els.openPdfBtn !== null);
+    console.log('Button style before:', els.openPdfBtn.style.display);
+    els.openPdfBtn.style.display = 'inline-flex';
+    console.log('Button style after:', els.openPdfBtn.style.display);
+
     // Show HTML chat section and init context in case user wants AI fixes
     els.htmlChatSection.style.display = '';
     htmlChatMessages = [
@@ -2209,6 +2238,55 @@ function appendHtmlChatBubble(role, text) {
   els.htmlChatHistory.appendChild(div);
   els.htmlChatHistory.scrollTop = els.htmlChatHistory.scrollHeight;
   return div;
+}
+
+/* ── Open PDF Function ── */
+function handleOpenPdf(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  const file = e.target.files?.[0];
+  if (!file) return;
+  
+  // Check if file is a PDF
+  if (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf')) {
+    alert('请选择一个PDF文件');
+    return;
+  }
+  
+  // Create object URL for the PDF file
+  const url = URL.createObjectURL(file);
+  
+  console.log('File selected, waiting for file chooser to close...');
+  
+  // Use setTimeout to ensure file chooser is fully closed before window.open()
+  setTimeout(() => {
+    console.log('Opening PDF in new tab...');
+    // Open the PDF directly in a new tab
+    const win = window.open(url, '_blank');
+    if (!win) {
+      console.warn('window.open() blocked by browser - trying alternative method');
+      // Fallback: create a hidden anchor element
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 5000);
+    } else {
+      // Clean up after 10 seconds (enough time for browser to open the PDF)
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+      }, 10000);
+    }
+  }, 100);
+  
+  // Reset file input to allow selecting the same file again
+  e.target.value = '';
 }
 
 /* ── Start ── */

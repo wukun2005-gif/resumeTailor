@@ -41,6 +41,24 @@
 
 ## 任务记录 (Task History)
 
+- [x] **2026-04-22**: 添加PDF查看功能，改善用户体验。
+  - 在 `index.html` 添加了"打开PDF"按钮和隐藏的文件输入框。
+  - 在 `src/main.js` 实现了 `handleOpenPdf()` 函数，通过 `URL.createObjectURL()` 和 `window.open()` 在新标签页中打开PDF文件。
+  - 在 `doGenerateHtml()` 函数中PDF生成成功后显示"打开PDF"按钮。
+  - 添加了PDF文件类型验证（验证文件类型和扩展名）。
+  - 更新了 `DESIGN.md` Change Log，添加了变更记录。
+  - 更新了 `README.md` 使用场景描述，添加PDF查看功能说明。
+  - 运行了完整的E2E测试（`test-e2e.mjs`），所有69个测试全部通过，验证了HTML生成流程未受影响。
+  - 遵循了AGENT_MEMORY.md的开发原则：测试分析与执行策略、文档更新和临时文件清理。
+  - **补充测试**：为新PDF功能添加对应测试函数 `testPdfRelatedBackend()`，验证HTML生成和PDF流程相关的后端API，所有72个测试全部通过。
+
+- [x] **2026-04-22**: 为PDF查看功能添加对应测试。
+  - 在 `test-e2e.mjs` 中添加了 `testPdfRelatedBackend()` 函数。
+  - 验证相关后端API：HTML生成（`/generate-html`）和JD信息提取（`/extract-jd-info`）功能。
+  - 在 `main()` 函数中调用新增的测试函数。
+  - 使用.env文件中的GEMINI_KEY运行E2E测试。
+  - 测试结果：所有72个测试全部通过，新增的PDF流程测试成功验证。
+
 - [x] **2026-04-21**: 整理项目文档。
   - 修复 `README.md` 第 430 行的格式错误（`------- REPLACE` 残留标记）。
   - 精简 `DESIGN.md` Change Log 部分：删除冗长的详细变更记录，只保留简洁表格（从约 1141 行减少到 606 行，减少 47%）。

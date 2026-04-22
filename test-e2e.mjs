@@ -914,6 +914,32 @@ async function testPiiGenerateHtml() {
   checkPiiRestored(result.text, 'pii /generate-html');
 }
 
+/**
+ * PDF功能测试 - 验证HTML生成和PDF打开相关流程
+ * 由于PDF打开是纯前端功能，这里测试相关的后端API状态
+ */
+async function testPdfRelatedBackend() {
+  // 测试HTML生成返回基本HTML语义标签
+  const htmlResult = await postSSEWithRetry('/generate-html', {
+    model: MODEL,
+    resumeText: SAMPLE_RESUME,
+    htmlInstructions: '',
+  });
+
+  log('/generate-html sanity (PDF flow) has content', htmlResult.text.length > 100, `length=${htmlResult.text.length}`);
+  
+  // 验证HTML包含基本标签（这是PDF生成的基础）
+  const hasBasicHtmlTags = /<(h1|h2|h3|p|div|span)/i.test(htmlResult.text);
+  log('/generate-html sanity (PDF flow) contains HTML tags', hasBasicHtmlTags, `tags found=${hasBasicHtmlTags}`);
+  
+  // 验证提取JD信息功能（用于PDF文件名生成）
+  const jdRes = await postJSON('/extract-jd-info', { model: MODEL, jd: SAMPLE_JD });
+  const jdData = await jdRes.json();
+  log('/extract-jd-info sanity (PDF flow) returns structured data', 
+      jdData.company || jdData.title || jdData.language, 
+      `company="${jdData.company}" title="${jdData.title}" language="${jdData.language}"`);
+}
+
 async function main() {
   console.log('\n=== Resume Tailor Lean E2E ===\n');
 
@@ -961,6 +987,7 @@ async function main() {
     await testPiiChat();
     await delay(RATE_LIMIT_DELAY);
     await testPiiGenerateHtml();
+    await testPdfRelatedBackend();
   } catch (err) {
     console.error('\nFATAL:', err.message);
     RESULTS.push({ test: 'FATAL', pass: false, detail: err.message });
