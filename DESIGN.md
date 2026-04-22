@@ -608,3 +608,56 @@ Mock 数据包含：
 
 > 详细变更内容可通过 `git log` 或 GitHub commit history 查看。
 
+---
+
+## 16. 测试配置
+
+### 16.1 测试环境管理
+
+**测试使用 `.env` 文件进行配置**：
+
+```
+.env              # 项目根目录环境变量文件（在 .gitignore 中）
+GEMINI_KEY=xxx    # Google AI Studio API Key，用于 E2E 测试
+```
+
+`.env` 文件被 `.gitignore` 忽略，**禁止提交任何包含真实密钥的 `.env` 文件**。
+
+### 16.2 测试运行机制
+
+**测试文件**：`test-e2e.mjs`
+
+**运行方式**：
+```bash
+node test-e2e.mjs
+```
+
+**测试运行流程**：
+1. 检查 `GEMINI_KEY` 环境变量是否已设置
+2. 如果未设置，自动从项目根目录的 `.env` 文件加载
+3. 测试使用 `import.meta.url` 定位测试文件自身路径，确保在任何工作目录下都能正确加载 `.env` 文件
+
+**测试环境变量**：
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `GEMINI_KEY` | Google AI Studio API Key | 从 `.env` 文件加载 |
+| `TEST_BASE` | API 基础 URL | `http://localhost:3001/api` |
+| `GEMINI_MODEL_ID` | 测试使用的 Gemini 模型 ID | `gemini-3.1-flash-lite-preview` |
+| `RUN_OCR_REAL` | 是否运行真实 OCR 测试 | 空（跳过） |
+
+### 16.3 Model Fallback 配置
+
+测试内置模型自动降级机制，当首选模型配额不足时自动切换到备用模型：
+
+| 优先级 | 模型 ID | 推荐等级 |
+|--------|---------|----------|
+| 1 | `gemini-3.1-flash-lite-preview` | 最推荐 (速度极快、配额最高) |
+| 2 | `gemini-2.5-flash-lite` | 最推荐 (速度极快、配额最高) |
+| 3 | `gemini-2.0-flash-lite` | 最推荐 (速度极快、配额最高) |
+| 4 | `gemini-3-flash-preview` | 综合能力最强 |
+| 5 | `gemini-2.5-flash` | 综合能力最强 |
+| 6 | `gemini-2.0-flash` | 综合能力最强 |
+| 7 | `gemini-3.1-pro-preview` | 高级能力 (配额较低) |
+| 8 | `gemini-3-pro-preview` | 高级能力 (配额较低) |
+| 9 | `gemini-2.5-pro` | 高级能力 (配额较低) |
+

@@ -14,13 +14,19 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Get the directory of this test file (test-e2e.mjs) for reliable .env lookup
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Load .env file if GEMINI_KEY not already set
 function loadEnvFile() {
   if (process.env.GEMINI_KEY) return; // Already set
   
   try {
-    const envPath = path.join(process.cwd(), '.env');
+    // Use the test file's directory to locate .env file reliably
+    const envPath = path.join(__dirname, '.env');
     const envContent = fsSync.readFileSync(envPath, 'utf-8');
     for (const line of envContent.split('\n')) {
       const trimmed = line.trim();
