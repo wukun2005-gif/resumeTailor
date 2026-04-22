@@ -64,10 +64,10 @@ const els = {
   manualResumeRow: $('manualResumeRow'), manualResumeInput: $('manualResumeInput'),
   genInstructions: $('genInstructions'), reviewInstructions: $('reviewInstructions'), htmlInstructions: $('htmlInstructions'), generateCoverLetter: $('generateCoverLetter'),
   generateBtn: $('generateBtn'), outputSection: $('outputSection'),
-  resumeOutput: $('resumeOutput'), resumeStatus: $('resumeStatus'), resumeTokenInfo: $('resumeTokenInfo'),
+   resumeOutput: $('resumeOutput'), resumeStatusAndToken: $('resumeStatusAndToken'),
   saveResumeBtn: $('saveResumeBtn'), regenerateBtn: $('regenerateBtn'),
   saveFilenameRow: $('saveFilenameRow'), saveFilename: $('saveFilename'), confirmSaveBtn: $('confirmSaveBtn'), cancelSaveBtn: $('cancelSaveBtn'),
-  reviewBtn: $('reviewBtn'), reviewOutput: $('reviewOutput'), reviewStatus: $('reviewStatus'), reviewTokenInfo: $('reviewTokenInfo'),
+   reviewBtn: $('reviewBtn'), reviewOutput: $('reviewOutput'), reviewStatusAndToken: $('reviewStatusAndToken'),
   applyReviewBtn: $('applyReviewBtn'),
   chatHistory: $('chatHistory'), chatInput: $('chatInput'), chatSendBtn: $('chatSendBtn'),
   genNotesSection: $('genNotesSection'), genNotesOutput: $('genNotesOutput'),
@@ -281,11 +281,9 @@ function clearWorkspaceState() {
   els.htmlChatSection.style.display = 'none';
   els.saveFilenameRow.style.display = 'none';
 
-  els.resumeStatus.textContent = '';
-  els.reviewStatus.textContent = '';
+  els.resumeStatusAndToken.textContent = '';
+  els.reviewStatusAndToken.textContent = '';
   els.htmlStatus.textContent = '';
-  els.resumeTokenInfo.textContent = '';
-  els.reviewTokenInfo.textContent = '';
   els.htmlTokenInfo.textContent = '';
   els.sessionTotalInfo.textContent = '';
   els.htmlUploadStatus.textContent = '';
@@ -1053,7 +1051,7 @@ async function loadLibrary(silent = false) {
     await applyLibraryFiles(files);
     const readableCount = files.filter(f => f.readable).length;
     if (!silent) {
-      els.resumeStatus.textContent = `已加载 ${files.length} 个文件（${readableCount} 个可读取）`;
+      els.resumeStatusAndToken.textContent = `已加载 ${files.length} 个文件（${readableCount} 个可读取）`;
     }
     // Enable export button when library has readable files
     els.exportDigestBtn.disabled = readableCount === 0;
@@ -1413,8 +1411,7 @@ async function doGenerate() {
   try {
     const libraryChanged = await refreshLibraryMetadataIfChanged();
     if (libraryChanged) {
-      els.resumeStatus.textContent = '检测到素材库变化，已自动刷新';
-      els.resumeStatus.className = 'status-bar';
+      els.resumeStatusAndToken.textContent = '检测到素材库变化，已自动刷新';
       persistDraftState(true);
     }
   } catch (e) {
@@ -1427,8 +1424,7 @@ async function doGenerate() {
   isStreaming = true;
   els.generateBtn.disabled = true;
   els.resumeOutput.value = '';
-  els.resumeStatus.textContent = '生成中...';
-  els.resumeStatus.className = 'status-bar loading';
+  els.resumeStatusAndToken.textContent = '生成中...';
   chatMessages = [];
   els.chatHistory.innerHTML = '';
   els.applyReviewBtn.disabled = true;
@@ -1455,7 +1451,7 @@ async function doGenerate() {
       const excludeNames = [els.baseResumeSelect.value, ...sameCompanyFiles.map(f => f.name)].filter(Boolean);
       const dir = els.libraryPath.value.trim();
       if (dir) {
-        els.resumeStatus.textContent = '正在预处理素材库...';
+        els.resumeStatusAndToken.textContent = '正在预处理素材库...';
         persistDraftState();
         const { digest } = await api.getLibraryDigest(dir, excludeNames);
         library = digest;
@@ -1496,8 +1492,8 @@ async function doGenerate() {
     ];
 
     // Display token usage
-    if (rawOutput.usage && els.resumeTokenInfo) {
-      els.resumeTokenInfo.textContent = formatUsage(rawOutput.usage, model);
+    if (rawOutput.usage && els.resumeStatusAndToken) {
+      els.resumeStatusAndToken.textContent = formatUsage(rawOutput.usage, model);
       sessionUsage.totalInput += (rawOutput.usage.input || 0);
       sessionUsage.totalOutput += (rawOutput.usage.output || 0);
       const pricing = PRICING[model] || { input: 0, output: 0 };
@@ -1505,8 +1501,7 @@ async function doGenerate() {
       updateSessionTotal();
     }
 
-    els.resumeStatus.textContent = '生成完成，正在自动保存...';
-    els.resumeStatus.className = 'status-bar';
+    els.resumeStatusAndToken.textContent = '生成完成，正在自动保存...';
     els.saveResumeBtn.disabled = false;
     els.generateHtmlBtn.disabled = false;
     persistDraftState(true);
@@ -1514,8 +1509,7 @@ async function doGenerate() {
     // Auto-save to library (save only resume body, not notes)
     await autoSaveToLibrary();
   } catch (e) {
-    els.resumeStatus.textContent = '生成失败: ' + e.message;
-    els.resumeStatus.className = 'status-bar';
+    els.resumeStatusAndToken.textContent = '生成失败: ' + e.message;
     persistDraftState(true);
   }
   isStreaming = false;
@@ -1530,18 +1524,16 @@ async function autoSaveToLibrary() {
     const info = await extractJdInfo();
     const filename = buildFilename(info, 'resume');
     await api.saveFile(dir + '/' + filename, els.resumeOutput.value);
-    els.resumeStatus.textContent = `已自动保存: ${filename}`;
-    els.resumeStatus.className = 'status-bar';
+    els.resumeStatusAndToken.textContent = `已自动保存: ${filename}`;
     persistDraftState(true);
     // Append new file to library contents cache (incremental, no full reset)
     resumeLibraryContents.push({ name: filename, content: els.resumeOutput.value });
     loadLibrary(true);
   } catch (e) {
-    els.resumeStatus.textContent = `生成完成（自动保存失败: ${e.message}）`;
+    els.resumeStatusAndToken.textContent = `生成完成（自动保存失败: ${e.message}）`;
     persistDraftState(true);
   }
 }
-
 /* ── Save ── */
 async function showSaveDialog() {
   const info = await extractJdInfo();
@@ -1566,8 +1558,7 @@ async function doSave() {
   try {
     await api.saveFile(filePath, els.resumeOutput.value);
     els.saveFilenameRow.style.display = 'none';
-    els.resumeStatus.textContent = `已保存到: ${filePath}`;
-    els.resumeStatus.className = 'status-bar';
+    els.resumeStatusAndToken.textContent = `已保存到: ${filePath}`;
     persistDraftState(true);
     // Append new file to library contents cache (incremental, no full reset)
     resumeLibraryContents.push({ name, content: els.resumeOutput.value });
@@ -1586,8 +1577,7 @@ async function doReview() {
   els.reviewBtn.disabled = true;
   els.applyReviewBtn.disabled = true;
   els.reviewOutput.value = '';
-  els.reviewStatus.textContent = 'Review 中...';
-  els.reviewStatus.className = 'status-bar loading';
+  els.reviewStatusAndToken.textContent = 'Review 中...';
   persistDraftState(true);
 
   try {
@@ -1604,7 +1594,7 @@ async function doReview() {
       // Use digest for library
       const dir = els.libraryPath.value.trim();
       if (dir) {
-        els.reviewStatus.textContent = '正在预处理素材库...';
+        els.reviewStatusAndToken.textContent = '正在预处理素材库...';
         persistDraftState();
         const { digest } = await api.getLibraryDigest(dir, []);
         library = digest;
@@ -1651,8 +1641,8 @@ async function doReview() {
     ];
 
     // Display token usage
-    if (result.usage && els.reviewTokenInfo) {
-      els.reviewTokenInfo.textContent = formatUsage(result.usage, result.model);
+    if (result.usage && els.reviewStatusAndToken) {
+      els.reviewStatusAndToken.textContent = formatUsage(result.usage, result.model);
       sessionUsage.totalInput += (result.usage.input || 0);
       sessionUsage.totalOutput += (result.usage.output || 0);
       const pricing = PRICING[result.model] || { input: 0, output: 0 };
@@ -1660,13 +1650,11 @@ async function doReview() {
       updateSessionTotal();
     }
 
-    els.reviewStatus.textContent = 'Review 完成';
-    els.reviewStatus.className = 'status-bar';
+    els.reviewStatusAndToken.textContent = 'Review 完成';
     els.applyReviewBtn.disabled = false;
     persistDraftState(true);
   } catch (e) {
-    els.reviewStatus.textContent = 'Review 失败: ' + e.message;
-    els.reviewStatus.className = 'status-bar';
+    els.reviewStatusAndToken.textContent = 'Review 失败: ' + e.message;
     persistDraftState(true);
   }
   isStreaming = false;
@@ -1762,8 +1750,7 @@ async function doApplyReview() {
   isStreaming = true;
   els.applyReviewBtn.disabled = true;
   els.resumeOutput.value = '';
-  els.resumeStatus.textContent = '根据Review意见更新简历中（diff模式）...';
-  els.resumeStatus.className = 'status-bar loading';
+  els.resumeStatusAndToken.textContent = '根据Review意见更新简历中（diff模式）...';
   persistDraftState(true);
 
   try {
@@ -1791,8 +1778,8 @@ async function doApplyReview() {
     });
 
     // Display token usage
-    if (diffOutput.usage && els.resumeTokenInfo) {
-      els.resumeTokenInfo.textContent = formatUsage(diffOutput.usage, model);
+    if (diffOutput.usage && els.resumeStatusAndToken) {
+      els.resumeStatusAndToken.textContent = formatUsage(diffOutput.usage, model);
       sessionUsage.totalInput += (diffOutput.usage.input || 0);
       sessionUsage.totalOutput += (diffOutput.usage.output || 0);
       const pricing = PRICING[model] || { input: 0, output: 0 };
@@ -1809,18 +1796,17 @@ async function doApplyReview() {
       persistDraftState(true);
 
       if (failed > 0) {
-        els.resumeStatus.textContent = `已应用 ${applied}/${diffs.length} 处修改（${failed} 处无法匹配）`;
+        els.resumeStatusAndToken.textContent = `已应用 ${applied}/${diffs.length} 处修改（${failed} 处无法匹配）`;
       } else {
-        els.resumeStatus.textContent = `已应用 ${applied} 处修改，正在自动保存...`;
+        els.resumeStatusAndToken.textContent = `已应用 ${applied} 处修改，正在自动保存...`;
       }
-      els.resumeStatus.className = 'status-bar';
       els.saveResumeBtn.disabled = false;
       els.generateHtmlBtn.disabled = false;
       persistDraftState(true);
       await autoSaveToLibrary();
     } else {
       // Fallback: diff parsing failed, use full regeneration
-      els.resumeStatus.textContent = 'Diff模式未生效，回退到全量重生成...';
+      els.resumeStatusAndToken.textContent = 'Diff模式未生效，回退到全量重生成...';
       els.resumeOutput.value = '';
       persistDraftState(true);
 
@@ -1850,8 +1836,8 @@ async function doApplyReview() {
       });
 
       // Display token usage
-      if (rawOutput.usage && els.resumeTokenInfo) {
-        els.resumeTokenInfo.textContent = formatUsage(rawOutput.usage, model);
+      if (rawOutput.usage && els.resumeStatusAndToken) {
+        els.resumeStatusAndToken.textContent = formatUsage(rawOutput.usage, model);
         sessionUsage.totalInput += (rawOutput.usage.input || 0);
         sessionUsage.totalOutput += (rawOutput.usage.output || 0);
         const pricing = PRICING[model] || { input: 0, output: 0 };
@@ -1862,8 +1848,7 @@ async function doApplyReview() {
       const { resumeBody } = parseGeneratedOutput(rawOutput.text || rawOutput);
       els.resumeOutput.value = resumeBody;
 
-      els.resumeStatus.textContent = '更新完成（全量重生成），正在自动保存...';
-      els.resumeStatus.className = 'status-bar';
+      els.resumeStatusAndToken.textContent = '更新完成（全量重生成），正在自动保存...';
       els.saveResumeBtn.disabled = false;
       els.generateHtmlBtn.disabled = false;
       persistDraftState(true);
@@ -1877,8 +1862,7 @@ async function doApplyReview() {
       { role: 'assistant', content: updatedResume },
     ];
   } catch (e) {
-    els.resumeStatus.textContent = '更新失败: ' + e.message;
-    els.resumeStatus.className = 'status-bar';
+    els.resumeStatusAndToken.textContent = '更新失败: ' + e.message;
     persistDraftState(true);
   }
   isStreaming = false;
@@ -1914,8 +1898,8 @@ async function doGenChat() {
     genChatMessages.push({ role: 'assistant', content: result.text || result });
 
     // Display token usage
-    if (result.usage && els.resumeTokenInfo) {
-      els.resumeTokenInfo.textContent = formatUsage(result.usage, result.model || model);
+    if (result.usage && els.resumeStatusAndToken) {
+      els.resumeStatusAndToken.textContent = formatUsage(result.usage, result.model || model);
       sessionUsage.totalInput += (result.usage.input || 0);
       sessionUsage.totalOutput += (result.usage.output || 0);
       const pricing = PRICING[result.model || model] || { input: 0, output: 0 };
@@ -1928,11 +1912,11 @@ async function doGenChat() {
     if ((result.text || result).includes('简历正文') && resumeBody) {
       els.resumeOutput.value = resumeBody;
       if (notes) els.genNotesOutput.value = notes;
-      els.resumeStatus.textContent = '简历已根据对话更新';
+      els.resumeStatusAndToken.textContent = '简历已根据对话更新';
       persistDraftState(true);
     } else if (looksLikeResume(result.text || result)) {
       els.resumeOutput.value = result;
-      els.resumeStatus.textContent = '简历已根据对话更新（请检查内容）';
+      els.resumeStatusAndToken.textContent = '简历已根据对话更新（请检查内容）';
       persistDraftState(true);
     }
   } catch (e) {
@@ -1979,8 +1963,8 @@ async function doChat() {
     chatMessages.push({ role: 'assistant', content: result.text || result });
 
     // Display token usage
-    if (result.usage && els.reviewTokenInfo) {
-      els.reviewTokenInfo.textContent = formatUsage(result.usage, result.model || model);
+    if (result.usage && els.reviewStatusAndToken) {
+      els.reviewStatusAndToken.textContent = formatUsage(result.usage, result.model || model);
       sessionUsage.totalInput += (result.usage.input || 0);
       sessionUsage.totalOutput += (result.usage.output || 0);
       const pricing = PRICING[result.model || model] || { input: 0, output: 0 };
@@ -1991,7 +1975,7 @@ async function doChat() {
     // If AI returned updated review, sync to review output area
     if (looksLikeReview(result.text || result)) {
       els.reviewOutput.value = result.text || result;
-      els.reviewStatus.textContent = '评审已根据对话更新';
+      els.reviewStatusAndToken.textContent = '评审已根据对话更新';
       persistDraftState(true);
     }
   } catch (e) {

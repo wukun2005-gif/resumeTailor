@@ -278,7 +278,7 @@
         <!-- Left: Resume -->
         <div class="panel">
           <div class="panel-header">
-            <h3>简历 / 求职信</h3>
+            <h3>简历 / 求职信<span id="resumeStatusAndToken" style="font-size:0.85rem;color:#666;margin-left:12px;"></span></h3>
             <div class="panel-actions">
               <button id="saveResumeBtn" class="btn-secondary btn-sm" disabled>保存到素材库</button>
               <button id="regenerateBtn" class="btn-secondary btn-sm">重新生成</button>
@@ -291,10 +291,6 @@
           </div>
           <textarea id="resumeOutput" rows="25" class="output-area" placeholder="生成的简历将显示在这里..."></textarea>
           <div id="sameCompanyHint" class="same-company-hint" style="display:none"></div>
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div id="resumeStatus" class="status-bar" style="flex:1;"></div>
-            <span id="resumeTokenInfo" style="font-size:0.8rem;color:#666;margin-left:8px;white-space:nowrap;"></span>
-          </div>
           <details id="genNotesSection" class="collapsible" style="display:none; margin-top: 8px;">
             <summary>AI 备注 / 需确认事项</summary>
             <textarea id="genNotesOutput" rows="8" class="output-area" readonly placeholder="AI的分析和需确认事项..."></textarea>
@@ -312,7 +308,7 @@
         <!-- Right: Review -->
         <div class="panel">
           <div class="panel-header">
-            <h3>Review</h3>
+            <h3>Review<span id="reviewStatusAndToken" style="font-size:0.85rem;color:#666;margin-left:12px;"></span></h3>
             <div class="panel-actions">
               <button id="reviewBtn" class="btn-secondary btn-sm">开始 Review</button>
               <button id="applyReviewBtn" class="btn-secondary btn-sm" disabled>采纳并更新简历</button>
@@ -326,10 +322,6 @@
               <textarea id="chatInput" rows="4" placeholder="输入你的问题，和AI讨论简历修改..."></textarea>
               <button id="chatSendBtn" class="btn-primary btn-sm">发送</button>
             </div>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div id="reviewStatus" class="status-bar" style="flex:1;"></div>
-            <span id="reviewTokenInfo" style="font-size:0.8rem;color:#666;margin-left:8px;white-space:nowrap;"></span>
           </div>
         </div>
       </div>
