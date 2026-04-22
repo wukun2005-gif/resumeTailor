@@ -1771,6 +1771,7 @@ async function doApplyReview() {
       reviewComments,
       jd: getNormalizedJdText(),
       previouslySubmitted,
+      instructions: els.genInstructions.value,
     }, (chunk, full) => {
       els.resumeOutput.value = full;
       els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;

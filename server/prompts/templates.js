@@ -243,8 +243,10 @@ export function getHtmlGenerationPrompt({ resumeText, formatRequirements, hyperl
 
 const APPLY_REVIEW_SYSTEM = `你是一位简历修改助手。根据评审意见，对简历进行精确的局部修改。只输出需要修改的部分，使用结构化的替换指令格式。`;
 
-export function getApplyReviewPrompt({ currentResume, reviewComments, jd, previouslySubmitted }) {
-  let prompt = `你是简历修改专家。MUST输出修改指令，格式如下：
+export function getApplyReviewPrompt({ currentResume, reviewComments, jd, previouslySubmitted, instructions }) {
+  let prompt = `${instructions || defaultInstructions()}
+
+你是简历修改专家。MUST输出修改指令，格式如下：
 
 ====== 修改指令 ======
 对于每处修改，MUST使用EXACTLY这个格式：

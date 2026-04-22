@@ -401,11 +401,11 @@ router.post('/apply-review', async (req, res) => {
   try {
     const piiEntries = getPiiEntries();
     if (piiEntries.length > 0) {
-      sanitizeRequestBody(req.body, ['currentResume', 'reviewComments', 'jd', 'previouslySubmitted'], piiEntries);
+      sanitizeRequestBody(req.body, ['currentResume', 'reviewComments', 'jd', 'previouslySubmitted', 'instructions'], piiEntries);
     }
-    const { model, currentResume, reviewComments, jd, previouslySubmitted } = req.body;
+    const { model, currentResume, reviewComments, jd, previouslySubmitted, instructions } = req.body;
     const caller = getModelCaller(model);
-    const { system, user } = getApplyReviewPrompt({ currentResume, reviewComments, jd, previouslySubmitted });
+    const { system, user } = getApplyReviewPrompt({ currentResume, reviewComments, jd, previouslySubmitted, instructions });
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
     const result = await caller(user, onChunk, { system, maxTokens: 4096 });
