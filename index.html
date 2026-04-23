@@ -250,16 +250,40 @@
 
       <details class="collapsible">
         <summary>生成指令（简历/求职信生成的注意事项）</summary>
+        <div class="instruction-toolbar">
+          <label class="btn-secondary btn-sm">
+            加载文件
+            <input type="file" id="genLoadFile" accept=".txt,.md,.html,.pdf,.docx" style="display:none">
+          </label>
+          <button id="genSaveFile" class="btn-secondary btn-sm">保存到文件</button>
+          <span id="genFileStatus" class="status-text"></span>
+        </div>
         <textarea id="genInstructions" rows="12" placeholder="输入生成简历和求职信时的注意事项和要求..."></textarea>
       </details>
 
       <details class="collapsible">
         <summary>评审指令（简历评审的注意事项）</summary>
+        <div class="instruction-toolbar">
+          <label class="btn-secondary btn-sm">
+            加载文件
+            <input type="file" id="reviewLoadFile" accept=".txt,.md,.html,.pdf,.docx" style="display:none">
+          </label>
+          <button id="reviewSaveFile" class="btn-secondary btn-sm">保存到文件</button>
+          <span id="reviewFileStatus" class="status-text"></span>
+        </div>
         <textarea id="reviewInstructions" rows="8" placeholder="输入简历评审时的注意事项和要求..."></textarea>
       </details>
 
       <details class="collapsible">
         <summary>HTML 格式指令（txt→HTML 转换的注意事项）</summary>
+        <div class="instruction-toolbar">
+          <label class="btn-secondary btn-sm">
+            加载文件
+            <input type="file" id="htmlFormatLoadFile" accept=".txt,.md,.html,.pdf,.docx" style="display:none">
+          </label>
+          <button id="htmlFormatSaveFile" class="btn-secondary btn-sm">保存到文件</button>
+          <span id="htmlFormatFileStatus" class="status-text"></span>
+        </div>
         <textarea id="htmlInstructions" rows="8" placeholder="输入HTML格式转换的额外要求..."></textarea>
       </details>
 

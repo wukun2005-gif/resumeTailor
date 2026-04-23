@@ -63,6 +63,10 @@ const els = {
   jdImageUpload: $('jdImageUpload'), jdImageUseAi: $('jdImageUseAi'), jdImageStatus: $('jdImageStatus'), jdImageAiRetryBtn: $('jdImageAiRetryBtn'), jdImageQualityHint: $('jdImageQualityHint'),
   manualResumeRow: $('manualResumeRow'), manualResumeInput: $('manualResumeInput'),
   genInstructions: $('genInstructions'), reviewInstructions: $('reviewInstructions'), htmlInstructions: $('htmlInstructions'), generateCoverLetter: $('generateCoverLetter'),
+  // 指令区文件操作
+  genLoadFile: $('genLoadFile'), genSaveFile: $('genSaveFile'), genFileStatus: $('genFileStatus'),
+  reviewLoadFile: $('reviewLoadFile'), reviewSaveFile: $('reviewSaveFile'), reviewFileStatus: $('reviewFileStatus'),
+  htmlFormatLoadFile: $('htmlFormatLoadFile'), htmlFormatSaveFile: $('htmlFormatSaveFile'), htmlFormatFileStatus: $('htmlFormatFileStatus'),
   generateBtn: $('generateBtn'), outputSection: $('outputSection'),
    resumeOutput: $('resumeOutput'), resumeStatusAndToken: $('resumeStatusAndToken'),
   saveResumeBtn: $('saveResumeBtn'), regenerateBtn: $('regenerateBtn'),
@@ -779,6 +783,13 @@ function bindEvents() {
     const modelInput = getConnInput(def.id, 'model');
     if (modelInput) modelInput.addEventListener('input', populateAgentDropdowns);
   }
+  // 指令区文件操作事件绑定
+  if (els.genLoadFile) els.genLoadFile.addEventListener('change', e => handleLoadFile(e, 'gen'));
+  els.genSaveFile.addEventListener('click', () => handleSaveFile('gen'));
+  if (els.reviewLoadFile) els.reviewLoadFile.addEventListener('change', e => handleLoadFile(e, 'review'));
+  els.reviewSaveFile.addEventListener('click', () => handleSaveFile('review'));
+  if (els.htmlFormatLoadFile) els.htmlFormatLoadFile.addEventListener('change', e => handleLoadFile(e, 'htmlFormat'));
+  els.htmlFormatSaveFile.addEventListener('click', () => handleSaveFile('htmlFormat'));
   els.jdInput.addEventListener('input', () => { jdInfo = null; updateGenerateBtn(); persistDraftState(); });
   els.manualResumeInput.addEventListener('input', persistDraftState);
   els.generateCoverLetter.addEventListener('change', persistDraftState);
@@ -2315,5 +2326,255 @@ function handleOpenPdf(e) {
   e.target.value = '';
 }
 
-/* ── Start ── */
-init();
+/* ── 指令区文件加载/保存功能 ── */
+/**
+ * 处理指令区文件加载
+ * @param {Event} e 文件选择事件
+ * @param {string} type 指令区类型：'gen', 'review', 'htmlFormat'
+ */
+async function handleLoadFile(e, type) {
+  console.log('handleLoadFile: 事件触发', e.type, 'target:', e.target.id, 'files length:', e.target.files?.length);
+  
+  const file = e.target.files?.[0];
+  if (!file) {
+    console.log('handleLoadFile: 没有选择文件');
+    return;
+  }
+  
+  console.log('handleLoadFile: 开始处理文件', file.name, file.type, file.size, 'type:', type);
+  
+  // 清除文件选择以允许再次选择同一文件
+  e.target.value = '';
+  
+  const statusEl = type === 'gen' ? els.genFileStatus :
+                  type === 'review' ? els.reviewFileStatus :
+                  els.htmlFormatFileStatus;
+  
+  const isStreamingOriginal = isStreaming;
+  isStreaming = true;
+  statusEl.textContent = '读取文件中...';
+  statusEl.className = 'status-text';
+  
+  try {
+    // 读取文件内容
+    console.log('handleLoadFile: 调用readFileContent');
+    const content = await readFileContent(file);
+    
+    console.log('handleLoadFile: 读取到内容长度', content.length, 'type:', typeof content);
+    
+    // 根据类型填充对应的textarea
+    if (type === 'gen') {
+      console.log('handleLoadFile: 填充生成指令区');
+      els.genInstructions.value = content;
+      persistInputs();
+      console.log('handleLoadFile: genInstructions.value 已更新');
+    } else if (type === 'review') {
+      console.log('handleLoadFile: 填充评审指令区');
+      els.reviewInstructions.value = content;
+      persistInputs();
+    } else if (type === 'htmlFormat') {
+      console.log('handleLoadFile: 填充HTML格式指令区');
+      els.htmlInstructions.value = content;
+      persistInputs();
+    }
+    
+    statusEl.textContent = `已加载: ${file.name} (${file.size.toLocaleString()} 字节)`;
+    statusEl.className = 'status-text success';
+    console.log('handleLoadFile: 文件加载成功');
+  } catch (err) {
+    statusEl.textContent = `加载失败: ${err.message}`;
+    statusEl.className = 'status-text error';
+    console.error('文件加载失败:', err);
+  } finally {
+    isStreaming = isStreamingOriginal;
+  }
+}
+
+/**
+ * 读取文件内容 - 使用后端的API读取本地文件
+ * @param {File} file 文件对象
+ * @returns {Promise<string>} 文件内容
+ */
+async function readFileContent(file) {
+  console.log('readFileContent: 开始读取文件', file.name, file.type, file.size);
+  
+  // 由于浏览器的安全限制，我们不能直接读取本地文件路径
+  // 这里我们使用现有的API来读取文件
+  const filePath = file.path; // 文件完整路径
+  
+  // 如果是较大的文件（比如PDF），使用后端API读取
+  if (filePath) {
+    console.log('readFileContent: 使用后端API读取文件', filePath);
+    try {
+      const response = await fetch(`/api/read-file?path=${encodeURIComponent(filePath)}`);
+      const data = await response.json();
+      if (response.ok) {
+        console.log('readFileContent: 后端API读取成功');
+        return data.content;
+      } else {
+        throw new Error(data.error || '读取文件失败');
+      }
+    } catch (err) {
+      console.warn('readFileContent: 后端API读取失败，切换到前端FileReader', err);
+    }
+  }
+  
+  // 如果没有路径（如从file input获取），或者后端API失败，尝试使用FileReader
+  console.log('readFileContent: 使用前端FileReader读取');
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      console.log('readFileContent: FileReader读取成功');
+      resolve(e.target.result);
+    };
+    reader.onerror = (e) => {
+      console.error('readFileContent: FileReader读取失败', e);
+      reject(new Error(`读取文件失败: ${e.target.error?.message || '未知错误'}`));
+    };
+    reader.onabort = (e) => {
+      console.error('readFileContent: FileReader读取中断');
+      reject(new Error('文件读取被中断'));
+    };
+    
+    // 根据文件类型选择合适的读取方法
+    if (file.type.includes('text') || file.name.endsWith('.txt') || file.name.endsWith('.md') || file.name.endsWith('.html')) {
+      reader.readAsText(file);
+    } else {
+      // 对于二进制文件，使用readAsDataURL或readAsArrayBuffer
+      reader.readAsText(file); // 仍然尝试作为文本读取
+    }
+  });
+}
+
+/**
+ * 处理指令区文件保存
+ * @param {string} type 指令区类型：'gen', 'review', 'htmlFormat'
+ */
+async function handleSaveFile(type) {
+  const content = type === 'gen' ? els.genInstructions.value.trim() :
+                  type === 'review' ? els.reviewInstructions.value.trim() :
+                  els.htmlInstructions.value.trim();
+  
+  if (!content) {
+    alert('请先输入指令内容');
+    return;
+  }
+  
+  const statusEl = type === 'gen' ? els.genFileStatus :
+                  type === 'review' ? els.reviewFileStatus :
+                  els.htmlFormatFileStatus;
+  
+  const isStreamingOriginal = isStreaming;
+  isStreaming = true;
+  statusEl.textContent = '保存中...';
+  statusEl.className = 'status-text';
+  
+  try {
+    // 生成默认文件名
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    let defaultName = '';
+    let suggestedName = '';
+    
+    if (type === 'gen') {
+      defaultName = '生成指令';
+    } else if (type === 'review') {
+      defaultName = '评审指令';
+    } else if (type === 'htmlFormat') {
+      defaultName = 'HTML格式指令';
+    }
+    
+    suggestedName = `${defaultName}-${dateStr}.txt`;
+    
+    console.log('handleSaveFile: 尝试保存文件，默认名称:', suggestedName, '内容长度:', content.length);
+    
+    // 让用户选择保存位置
+    const fileHandle = await promptForSavePath(suggestedName);
+    if (!fileHandle) return;
+    
+    if (typeof fileHandle === 'string') {
+      // 降级方案：使用api.saveFile（需要素材库路径）
+      const libPath = els.libraryPath.value.trim();
+      if (libPath) {
+        const filePath = libPath + '/' + fileHandle;
+        console.log('handleSaveFile: 使用API保存到素材库:', filePath);
+        await api.saveFile(filePath, content);
+        statusEl.textContent = `已保存到素材库: ${filePath}`;
+        statusEl.className = 'status-text success';
+      } else {
+        // 无法保存，因为没有素材库路径
+        throw new Error('请先设置素材库路径，或使用浏览器的文件选择器');
+      }
+    } else {
+      // 现代浏览器：直接写入文件句柄
+      console.log('handleSaveFile: 使用文件句柄直接写入', fileHandle.name);
+      const writable = await fileHandle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      statusEl.textContent = `已保存: ${fileHandle.name}`;
+      statusEl.className = 'status-text success';
+    }
+  } catch (err) {
+    statusEl.textContent = `保存失败: ${err.message}`;
+    statusEl.className = 'status-text error';
+    console.error('文件保存失败:', err);
+  } finally {
+    isStreaming = isStreamingOriginal;
+  }
+}
+
+/**
+ * 提示用户输入保存路径（简化版，实际项目中可能需要更复杂的文件选择器）
+ * @param {string} defaultName 默认文件名
+ * @returns {Promise<FileSystemFileHandle|string>} 文件句柄或路径字符串
+ */
+async function promptForSavePath(defaultName) {
+  // 简单的实现：使用prompt弹窗
+  // 实际项目中可能需要集成showSaveFilePicker API
+  if ('showSaveFilePicker' in window) {
+    try {
+      const fileHandle = await window.showSaveFilePicker({
+        suggestedName: defaultName,
+        types: [
+          {
+            description: '文本文件',
+            accept: {
+              'text/plain': ['.txt', '.md']
+            },
+          },
+        ],
+      });
+      
+      // 返回文件句柄，而不是文件名
+      return fileHandle;
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error('文件选择器失败:', err);
+      }
+      // 降级到基础提示框
+    }
+  }
+  
+  // 降级方案：使用prompt
+  const path = prompt('请输入文件保存路径:', defaultName);
+  return path;
+}
+
+// 添加全局调试函数
+window.testFileLoading = function() {
+  console.log('testFileLoading: 测试文件加载功能');
+  console.log('genLoadFile element:', document.getElementById('genLoadFile'));
+  console.log('genLoadFile event listeners:', 
+    document.getElementById('genLoadFile')?.eventListeners || '无法获取监听器');
+};
+
+// 模块加载完成后自动初始化应用
+(async function() {
+  console.log('main.js模块加载完成，开始初始化应用...');
+  try {
+    await init();
+    console.log('init()函数调用成功');
+  } catch (error) {
+    console.error('init()函数调用失败:', error);
+  }
+})();

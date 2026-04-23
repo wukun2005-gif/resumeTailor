@@ -1016,6 +1016,175 @@ async function testPdfRelatedBackend() {
       `company="${jdData.company}" title="${jdData.title}" language="${jdData.language}"`);
 }
 
+/**
+ * 测试指令区文件加载功能
+ */
+async function testInstructionFileLoading() {
+  console.log('\n[Test] 指令区文件加载功能测试');
+  
+  const log = (desc, pass, detail = '') => {
+    console.log(pass ? '✓' : '✗', desc, detail);
+    RESULTS.push({ test: `InstructionFileLoading: ${desc}`, pass, detail });
+  };
+  
+  try {
+    // 创建测试文件
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-inst-'));
+    const testFilePath = path.join(tempDir, 'test-instructions.txt');
+    const testContent = '这是测试指令内容\n包含多行文本\n用于验证文件加载功能';
+    
+    await fs.writeFile(testFilePath, testContent, 'utf-8');
+    
+    // 测试读取文件API
+    const fileContentRes = await fetch(`${BASE}/read-file?path=${encodeURIComponent(testFilePath)}`);
+    const fileContent = await fileContentRes.json();
+    
+    log('/read-file API 返回成功', fileContentRes.ok, `status=${fileContentRes.status}`);
+    log('/read-file JSON 包含内容字段', !!fileContent.content, `hasContent=${!!fileContent.content}`);
+    log('/read-file 内容匹配', fileContent.content === testContent, `length=${fileContent.content?.length || 0}`);
+    
+    // 清理
+    await fs.rm(tempDir, { recursive: true });
+    
+    return fileContent.content;
+  } catch (err) {
+    log('testInstructionFileLoading 执行失败', false, err.message);
+    throw err;
+  }
+}
+
+/**
+ * 测试指令区文件保存功能
+ */
+async function testInstructionFileSaving() {
+  console.log('\n[Test] 指令区文件保存功能测试');
+  
+  const log = (desc, pass, detail = '') => {
+    console.log(pass ? '✓' : '✗', desc, detail);
+    RESULTS.push({ test: `InstructionFileSaving: ${desc}`, pass, detail });
+  };
+  
+  try {
+    // 创建测试目录和文件
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-save-'));
+    const testContent = '这是测试保存的指令内容\n保存功能验证\n文件保存测试';
+    
+    // 测试保存文件API
+    const saveRes = await fetch(`${BASE}/save-file`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path: tempDir,
+        content: testContent,
+        filename: 'saved-instructions.txt'
+      })
+    });
+    
+    const saveResult = await saveRes.json();
+    
+    log('/save-file API 返回成功', saveRes.ok, `status=${saveRes.status}`);
+    log('/save-file JSON 包含成功字段', !!saveResult.success, `success=${saveResult.success}`);
+    log('/save-file 返回文件路径', !!saveResult.filePath, `path=${saveResult.filePath}`);
+    
+    // 验证文件确实被保存
+    if (saveResult.filePath) {
+      const savedContent = await fs.readFile(saveResult.filePath, 'utf-8');
+      log('保存的文件内容匹配', savedContent === testContent, `length=${savedContent.length}`);
+    }
+    
+    // 清理
+    await fs.rm(tempDir, { recursive: true });
+    
+    return saveResult.filePath;
+  } catch (err) {
+    log('testInstructionFileSaving 执行失败', false, err.message);
+    throw err;
+  }
+}
+
+/**
+ * 测试跨投递一致性检查功能
+ */
+async function testCrossSubmissionConsistency() {
+  console.log('\n[Test] 跨投递一致性检查功能测试');
+  
+  const log = (desc, pass, detail = '') => {
+    console.log(pass ? '✓' : '✗', desc, detail);
+    RESULTS.push({ test: `CrossSubmissionConsistency: ${desc}`, pass, detail });
+  };
+  
+  try {
+    // 创建测试目录和文件
+    const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-consistency-'));
+    
+    // 创建模拟的同公司文件
+    const files = [
+      { name: '应聘-中国电信-产品经理-2025-01-15.txt', content: '申请职位：产品经理\n公司：中国电信\n工作地点：北京' },
+      { name: '中国电信-产品经理-简历初稿.md', content: '# 产品经理简历\n## 中国电信\n## 项目经验' },
+      { name: '其他公司-应聘信.txt', content: '申请职位：工程师\n公司：华为\n工作地点：深圳' }
+    ];
+    
+    for (const file of files) {
+      await fs.writeFile(path.join(testDir, file.name), file.content, 'utf-8');
+    }
+    
+    // 提交findSameCompanyFiles请求
+    const findRes = await fetch(`${BASE}/find-same-company-files`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path: testDir,
+        searchTerm: '中国电信'
+      })
+    });
+    
+    const findResult = await findRes.json();
+    
+    log('/find-same-company-files API 返回成功', findRes.ok, `status=${findRes.status}`);
+    log('/find-same-company-files 返回文件列表', Array.isArray(findResult.files), `filesCount=${findResult.files?.length || 0}`);
+    
+    // 应该找到2个文件（排除其他公司的文件）
+    if (Array.isArray(findResult.files)) {
+      const expectedCount = 2; // 两个中国电信相关的文件
+      log(`找到预期数量的文件 (${expectedCount})`, findResult.files.length === expectedCount, `found=${findResult.files.length}`);
+      
+      // 验证文件名称
+      const filenames = findResult.files.map(f => f.name);
+      const hasFirstFile = filenames.includes(files[0].name);
+      const hasSecondFile = filenames.includes(files[1].name);
+      
+      log('包含第一个中国电信文件', hasFirstFile);
+      log('包含第二个中国电信文件', hasSecondFile);
+    }
+    
+    // 测试buildPreviouslySubmitted
+    const submittedRes = await fetch(`${BASE}/build-previously-submitted`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path: testDir,
+        files: findResult.files || []
+      })
+    });
+    
+    const submittedResult = await submittedRes.json();
+    
+    log('/build-previously-submitted API 返回成功', submittedRes.ok, `status=${submittedRes.status}`);
+    log('/build-previously-submitted 返回内容', !!submittedResult.content, `hasContent=${!!submittedResult.content}`);
+    log('/build-previously-submitted 内容包含公司名', 
+        submittedResult.content?.includes('中国电信') || false, 
+        `contentLength=${submittedResult.content?.length || 0}`);
+    
+    // 清理
+    await fs.rm(testDir, { recursive: true });
+    
+    return submittedResult.content;
+  } catch (err) {
+    log('testCrossSubmissionConsistency 执行失败', false, err.message);
+    throw err;
+  }
+}
+
 async function main() {
   console.log('\n=== Resume Tailor Lean E2E ===\n');
 
@@ -1064,6 +1233,14 @@ async function main() {
     await delay(RATE_LIMIT_DELAY);
     await testPiiGenerateHtml();
     await testPdfRelatedBackend();
+    
+    // 测试文件操作功能
+    await delay(RATE_LIMIT_DELAY);
+    await testInstructionFileLoading();
+    await delay(RATE_LIMIT_DELAY);
+    await testInstructionFileSaving();
+    await delay(RATE_LIMIT_DELAY);
+    await testCrossSubmissionConsistency();
   } catch (err) {
     console.error('\nFATAL:', err.message);
     RESULTS.push({ test: 'FATAL', pass: false, detail: err.message });
