@@ -291,8 +291,8 @@ router.post('/library-digest', async (req, res) => {
     const { dir, excludeNames } = req.body;
     if (!dir) return res.status(400).json({ error: '需要提供素材库路径' });
     const validDir = validatePath(dir);
-    const { digest, fromCache } = await getLibraryDigest(validDir, excludeNames || []);
-    res.json({ digest, fromCache, fileCount: digest.length });
+    const { digest, fromCache, sourceTokens, digestTokens } = await getLibraryDigest(validDir, excludeNames || []);
+    res.json({ digest, fromCache, fileCount: digest.length, sourceTokens, digestTokens });
   } catch (err) {
     res.status(err.message.includes('拒绝') ? 403 : 500).json({ error: err.message });
   }

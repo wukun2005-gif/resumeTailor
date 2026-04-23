@@ -598,7 +598,11 @@ async function testFileRoutesAndDigest() {
   log('/library-digest preserves spec artifact text', exportMap.get('ExcelAgent Specification.md')?.includes('MVP Specification'), exportMap.get('ExcelAgent Specification.md') || '');
   log('/library-digest preserves project artifact text verbatim', exportMap.get('项目经历.txt')?.includes('职位描述：这段是原始素材中的上下文备注，需要原文保留。'), exportMap.get('项目经历.txt') || '');
   const repeatCount = (exportFlattened.match(/Led AI platform from 0 to 1/gi) || []).length;
-  log('/library-digest near-duplicate paragraphs merged', repeatCount === 1, `repeatCount=${repeatCount}`);
+   log('/library-digest near-duplicate paragraphs merged', repeatCount === 1, `repeatCount=${repeatCount}`);
+   log('/library-digest export has sourceTokens (number)', typeof exportData.sourceTokens === 'number' && exportData.sourceTokens > 0, exportData.sourceTokens);
+   log('/library-digest export has digestTokens (number)', typeof exportData.digestTokens === 'number' && exportData.digestTokens > 0, exportData.digestTokens);
+   // Verify digestTokens <= sourceTokens (digest is deduplicated)
+   log('/library-digest digestTokens <= sourceTokens', exportData.digestTokens <= exportData.sourceTokens, `digest=${exportData.digestTokens}, source=${exportData.sourceTokens}`);
 }
 
 /**
@@ -918,6 +922,72 @@ async function testPiiGenerateHtml() {
 
   log('pii /generate-html has content', result.text.length > 100, `length=${result.text.length}`);
   checkPiiRestored(result.text, 'pii /generate-html');
+}
+
+/**
+ * 本地token估算算法测试
+ * 重现前端calculateEstimatedTokens的逻辑进行验证
+ */
+function estimateTokens(text) {
+  const content = String(text);
+  
+  // 统计中文字符（基本汉字区）
+  const chineseChars = (content.match(/[\u4e00-\u9fff]/g) || []).length;
+  
+  // 统计CJK扩展字符
+  const cjkExtChars = (content.match(/[\u3400-\u4dbf]/g) || []).length;
+  
+  // 统计日文/韩文字符
+  const japaneseChars = (content.match(/[\u3040-\u309f]/g) || []).length;
+  const koreanChars = (content.match(/[\uac00-\ud7af]/g) || []).length;
+  
+  // 统计其他字符（英文、数字、标点等）
+  const otherChars = content.length - chineseChars - cjkExtChars - japaneseChars - koreanChars;
+  
+  // Token估算：中文≈1 token/字符，其他≈4字符/1 token
+  return Math.ceil(
+    chineseChars * 1.0 +
+    cjkExtChars * 1.0 +
+    japaneseChars * 1.0 +
+    koreanChars * 1.0 +
+    otherChars / 4
+  );
+}
+
+async function testLocalTokenEstimation() {
+  // 测试中文文本（"这是一个测试文本" = 8个汉字）
+  const chineseText = '这是一个测试文本';
+  const chineseEstimate = estimateTokens(chineseText);
+  log('local token estimation: chinese text', 
+      chineseEstimate === 8, 
+      `text="${chineseText}" estimated=${chineseEstimate} expected=8`);
+  
+  // 测试英文文本（19字符 / 4 = 4.75 ≈ 5 tokens）
+  const englishText = 'This is a test text';
+  const englishEstimate = estimateTokens(englishText);
+  log('local token estimation: english text', 
+      englishEstimate === 5, 
+      `text="${englishText}" estimated=${englishEstimate} expected=5`);
+  
+  // 测试混合文本
+  const mixedText = '中文ABC中文123';
+  const mixedEstimate = estimateTokens(mixedText);
+  // 4个中文 + 7个other = 4 + 2 = 6 tokens
+  log('local token estimation: mixed text', 
+      mixedEstimate === 6, 
+      `text="${mixedText}" estimated=${mixedEstimate} expected=6`);
+  
+  // 测试空文本
+  log('local token estimation: empty text', 
+      estimateTokens('') === 0, 
+      `estimated=${estimateTokens('')}`);
+  
+  // 测试边界情况：纯标点符号
+  const punctuation = '。，！？；：';
+  const punctuationEstimate = estimateTokens(punctuation);
+  log('local token estimation: punctuation only', 
+      punctuationEstimate === 2, 
+      `text="${punctuation}" estimated=${punctuationEstimate} expected=2`);
 }
 
 /**

@@ -3,6 +3,38 @@ import path from 'path';
 import crypto from 'crypto';
 import { readFileContent, listResumeFiles } from './fileReader.js';
 
+/**
+ * 估算文本的token数量（本地计算，不需要调用AI API）
+ * 基于tiktoken的通用经验：
+ * - 中文：1个汉字 ≈ 1 token
+ * - 英文/数字/标点：平均约4字符 ≈ 1 token
+ */
+function calculateEstimatedTokens(text) {
+  const content = String(text || '');
+  
+  // 统计中文字符（基本汉字区）
+  const chineseChars = (content.match(/[\u4e00-\u9fff]/g) || []).length;
+  
+  // 统计CJK扩展字符
+  const cjkExtChars = (content.match(/[\u3400-\u4dbf]/g) || []).length;
+  
+  // 统计日文/韩文字符
+  const japaneseChars = (content.match(/[\u3040-\u309f]/g) || []).length;
+  const koreanChars = (content.match(/[\uac00-\ud7af]/g) || []).length;
+  
+  // 统计其他字符（英文、数字、标点等）
+  const otherChars = content.length - chineseChars - cjkExtChars - japaneseChars - koreanChars;
+  
+  // Token估算：中文≈1 token/字符，其他≈4字符/1 token
+  return Math.ceil(
+    chineseChars * 1.0 +
+    cjkExtChars * 1.0 +
+    japaneseChars * 1.0 +
+    koreanChars * 1.0 +
+    otherChars / 4
+  );
+}
+
 const CACHE_DIR = '.resume-tailor-cache';
 const CACHE_FILE = 'digest.json';
 const CACHE_SCHEMA_VERSION = 'digest-v6';
@@ -98,7 +130,7 @@ export function isExportedDigestArtifactFileName(name) {
  *
  * @param {string} dirPath - Library directory path
  * @param {string[]} excludeNames - File names to exclude from digest
- * @returns {Promise<{digest: Array<{name: string, content: string}>, fromCache: boolean}>}
+ * @returns {Promise<{digest: Array<{name: string, content: string}>, fromCache: boolean, sourceTokens: number, digestTokens: number}>}
  */
 export async function getLibraryDigest(dirPath, excludeNames = []) {
   const files = await listResumeFiles(dirPath);
@@ -107,13 +139,25 @@ export async function getLibraryDigest(dirPath, excludeNames = []) {
     f => f.readable && !excludeSet.has(f.name) && !isExportedDigestArtifactFileName(f.name),
   );
 
-  if (targetFiles.length === 0) return { digest: [], fromCache: false };
+  if (targetFiles.length === 0) return { digest: [], fromCache: false, sourceTokens: 0, digestTokens: 0 };
 
   const cacheKey = buildCacheKey(targetFiles);
   const cachePath = path.join(dirPath, CACHE_DIR, CACHE_FILE);
   const cached = await loadCache(cachePath);
   if (cached && cached.key === cacheKey) {
-    return { digest: cached.digest, fromCache: true };
+    const digestTokens = cached.digest.reduce((sum, item) => sum + calculateEstimatedTokens(item.content), 0);
+    // Recalculate sourceTokens for backward compatibility with old caches that don't have it
+    let recalculatedSourceTokens = 0;
+    // Use targetFiles (same files as sortedFiles, just different order - doesn't affect token count)
+    for (const f of targetFiles) {
+      try {
+        const content = await readFileContent(path.join(dirPath, f.name));
+        recalculatedSourceTokens += calculateEstimatedTokens(content);
+      } catch {
+        // Skip files that fail to read
+      }
+    }
+    return { digest: cached.digest, fromCache: true, sourceTokens: recalculatedSourceTokens, digestTokens };
   }
 
   // Layer ordering: 0 = full-preserve originals first, 1 = base resumes, 2 = dated delivery versions last.
@@ -157,9 +201,23 @@ export async function getLibraryDigest(dirPath, excludeNames = []) {
     }
   }
 
-  await saveCache(cachePath, { key: cacheKey, digest });
+  // Calculate sourceTokens: total tokens of all original file contents
+  let sourceTokens = 0;
+  for (const f of sortedFiles) {
+    try {
+      const content = await readFileContent(path.join(dirPath, f.name));
+      sourceTokens += calculateEstimatedTokens(content);
+    } catch {
+      // Skip files that fail to read
+    }
+  }
 
-  return { digest, fromCache: false };
+  // Calculate digestTokens: total tokens of digest content
+  const digestTokens = digest.reduce((sum, item) => sum + calculateEstimatedTokens(item.content), 0);
+
+  await saveCache(cachePath, { key: cacheKey, digest, sourceTokens });
+
+  return { digest, fromCache: false, sourceTokens, digestTokens };
 }
 
 /**

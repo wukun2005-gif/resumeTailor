@@ -1065,6 +1065,45 @@ async function loadLibrary(silent = false) {
  * Export the preprocessed (paragraph-deduplicated) text library as a
  * human-readable .txt file for use with other AI tools.
  */
+/**
+ * 估算文本的token数量（本地计算，不需要调用AI API）
+ * 基于tiktoken的通用经验：
+ * - 中文：1个汉字 ≈ 1 token（更准确的经验值）
+ * - 英文/数字/标点：平均约4字符 ≈ 1 token
+ * - 这是一个近似估算，实际token数量可能因具体文本而异
+ */
+async function calculateEstimatedTokens(text) {
+  const content = String(text);
+  
+  // 统计中文字符（基本汉字区）
+  const chineseChars = (content.match(/[\u4e00-\u9fff]/g) || []).length;
+  
+  // 统计CJK扩展字符（ Rare Chinese characters）
+  const cjkExtChars = (content.match(/[\u3400-\u4dbf]/g) || []).length;
+  
+  // 统计日文/韩文字符（如果存在）
+  const japaneseChars = (content.match(/[\u3040-\u309f]/g) || []).length; // Hiragana
+  const koreanChars = (content.match(/[\uac00-\ud7af]/g) || []).length; // Hangul
+  
+  // 统计其他字符（英文、数字、标点、空格等）
+  const otherChars = content.length - chineseChars - cjkExtChars - japaneseChars - koreanChars;
+  
+  // Token估算：
+  // - 中文字符：每个汉字 ≈ 1 token
+  // - CJK扩展字符：每个 ≈ 1 token
+  // - 日韩字符：每个 ≈ 1 token
+  // - 其他字符：平均4字符 ≈ 1 token
+  const estimatedTokens = Math.ceil(
+    chineseChars * 1.0 +
+    cjkExtChars * 1.0 +
+    japaneseChars * 1.0 +
+    koreanChars * 1.0 +
+    otherChars / 4
+  );
+  
+  return estimatedTokens;
+}
+
 async function exportDigest() {
   const dir = els.libraryPath.value.trim();
   if (!dir) { alert('请先输入素材库路径并加载'); return; }
@@ -1072,7 +1111,7 @@ async function exportDigest() {
   els.exportDigestStatus.textContent = '正在导出...';
   els.exportDigestStatus.className = 'status-text';
   try {
-    const { digest, fileCount } = await api.getLibraryDigest(dir, []);
+    const { digest, fileCount, sourceTokens, digestTokens } = await api.getLibraryDigest(dir, []);
     if (!digest || digest.length === 0) {
       els.exportDigestStatus.textContent = '素材库为空，无可导出内容';
       els.exportDigestStatus.className = 'status-text error';
@@ -1087,6 +1126,8 @@ async function exportDigest() {
       `导出时间：${dateStr} ${timeStr}`,
       `素材库路径：${dir}`,
       `文件数量：${fileCount}`,
+      `源文件总输入 Token：${sourceTokens.toLocaleString()}`,
+      `预处理后输入 Token：${digestTokens.toLocaleString()}`,
       '已去重段落',
       '',
     ];
@@ -1106,7 +1147,7 @@ async function exportDigest() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    els.exportDigestStatus.textContent = `导出完成（${fileCount} 个文件）`;
+    els.exportDigestStatus.textContent = `导出完成（${fileCount} 个文件，源文件: ${sourceTokens.toLocaleString()} tokens，预处理后: ${digestTokens.toLocaleString()} tokens）`;
     els.exportDigestStatus.className = 'status-text success';
   } catch (e) {
     els.exportDigestStatus.textContent = '导出失败: ' + e.message;
