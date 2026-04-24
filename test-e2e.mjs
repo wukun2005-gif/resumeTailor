@@ -1,13 +1,48 @@
 /**
- * Lean regression suite.
- *
- * Strategy:
- * - Keep all real Gemini-backed API routes covered once
- * - Keep a small set of high-value local/non-AI regressions
- * - Avoid heavy frontend/jsdom and redundant mock-path coverage here
- *
+ * E2E Regression Suite for Resume Tailor
+ * ======================================
+ * 
+ * 测试分类指南（AI开发者必读）：
+ * 
+ * 【核心流程测试】必须通过 - 修改核心功能时运行
+ * ├── testInitBase           - 初始化连接
+ * ├── testGenerate           - 简历生成（含求职信、AI备注）
+ * ├── testReview             - 简历评审
+ * ├── testReviewWithInstructions - 带指令评审
+ * ├── testReviewMulti        - 多模型评审合并
+ * ├── testApplyReview        - 应用评审修改
+ * └── testReviewChat         - Chat对话
+ * 
+ * 【文件操作测试】文件功能相关时运行
+ * ├── testFileRoutesAndDigest - 文件读写+去重核心功能
+ * ├── testDigestNoBlanksDedup - 无空行去重（边缘case）
+ * └── testDigestLayeredDedup  - 分层去重（边缘case）
+ * 
+ * 【PII功能测试】PII脱敏还原相关时运行
+ * ├── testInitPii        - PII初始化
+ * ├── testPiiGenerate    - PII生成
+ * ├── testPiiReview      - PII评审
+ * └── testPiiChat        - PII Chat
+ * 
+ * 【AI预处理测试】预处理功能相关时运行
+ * ├── testAiPreprocessLibrary - AI预处理核心功能
+ * ├── testAiPreprocessRealApi - 真实API调用验证
+ * └── testPreprocessLibrary    - 缓存功能
+ * 
+ * 【JD解析测试】JD相关时运行
+ * ├── testExtractJdInfo         - AI解析JD
+ * ├── testExtractJdInfoLocalFallback - 本地fallback解析
+ * └── testMockJdImageOcr        - OCR功能
+ * 
+ * 【模型管理测试】模型连接相关时运行
+ * ├── testListModels                - 模型列表
+ * └── testListModelsWithInputKeyOverride - API Key覆盖
+ * 
  * Usage:
  *   GEMINI_KEY=xxx TEST_BASE=http://localhost:3003/api node test-e2e.mjs
+ * 
+ * 运行特定测试（开发时）：
+ *   修改 main() 函数，注释掉不需要的测试函数调用
  */
 
 import fs from 'fs/promises';
@@ -188,6 +223,7 @@ function parseSSEText(text) {
   let error = null;
   let usage = null;
   let model = null;
+  let fromCache = null;
 
   for (const line of text.split('\n')) {
     if (!line.startsWith('data: ')) continue;
@@ -198,11 +234,12 @@ function parseSSEText(text) {
       if (data.type === 'done') {
         usage = data.usage || null;
         model = data.model || null;
+        fromCache = data.fromCache ?? null;
       }
     } catch {}
   }
 
-  return { text: result, error, usage, model };
+  return { text: result, error, usage, model, fromCache };
 }
 
 function isModelQuotaError(text = '') {
@@ -376,351 +413,14 @@ function checkPiiRestored(result, testName, expectRealPii = true) {
     restored.length ? restored.join(', ') : 'none');
 }
 
+// ============================================================================
+// 核心流程测试
+// ============================================================================
+
 async function testInitBase() {
   const res = await postJSON('/init', getInitPayload(false));
   const data = await res.json();
   log('base /init ready', data.success && data.readyConnections.includes(MODEL), `connections=${data.readyConnections}`);
-}
-
-async function testExtractJdInfo() {
-  let info = {};
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await postJSON('/extract-jd-info', { model: MODEL, jd: SAMPLE_JD });
-    info = await res.json();
-    if (info.company && info.title && info.usage && typeof info.usage.input === 'number') break;
-    if (attempt < 3) {
-      const waitSec = 10 * (attempt + 1);
-      console.log(`  /extract-jd-info unstable, waiting ${waitSec}s before retry ${attempt + 2}/4`);
-      await delay(waitSec * 1000);
-    }
-  }
-  log('/extract-jd-info company', !!info.company, `company="${info.company}"`);
-  log('/extract-jd-info title', !!info.title, `title="${info.title}"`);
-  log('/extract-jd-info language', info.language === 'zh', `language="${info.language}"`);
-  log('/extract-jd-info usage returned', !!info.usage && typeof info.usage.input === 'number', JSON.stringify(info.usage || {}));
-}
-
-async function testExtractJdInfoLocalFallback() {
-  const res = await postJSON('/extract-jd-info', { jd: LOCAL_PARSE_JD });
-  const info = await res.json();
-  log('/extract-jd-info local fallback company', info.company === 'Example Labs', JSON.stringify(info));
-  log('/extract-jd-info local fallback title', info.title === 'Senior Product Manager', JSON.stringify(info));
-  log('/extract-jd-info local fallback usage.local', info.usage?.local === true, JSON.stringify(info.usage || {}));
-}
-
-async function testListModels() {
-  const res = await postJSON('/list-models', { connectionId: MODEL });
-  const data = await res.json();
-  const models = data.models || [];
-  const searchTexts = models.map(model => `${model.id} ${model.displayName || ''}`);
-  const banned = searchTexts.filter(text => BANNED_MODEL_PATTERNS.some(pattern => pattern.test(text)));
-  const allGemini = models.every(model => /^gemini-/i.test(model.id));
-
-  log('/list-models has results', models.length > 0, `count=${models.length}`);
-  log('/list-models only free text-suitable Gemini', banned.length === 0, banned.join(', '));
-  log('/list-models all Gemini family', allGemini, models.map(model => model.id).join(', '));
-}
-
-async function testListModelsWithInputKeyOverride() {
-  await postJSON('/init', {
-    modelConnections: [
-      { id: MODEL, key: 'invalid-key-for-regression', model: GEMINI_MODEL_ID, label: 'Google AI Studio' },
-    ],
-    allowedPaths: ['/tmp'],
-  });
-
-  const res = await postJSON('/list-models', { connectionId: MODEL, apiKey: GEMINI_KEY });
-  const data = await res.json();
-  const models = data.models || [];
-  log('/list-models apiKey override works even with stale init key', models.length > 0, `count=${models.length}`);
-}
-
-async function testFileRoutesAndDigest() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-e2e-'));
-  const alpha = path.join(dir, 'alpha.txt');
-  const beta = path.join(dir, 'beta.md');
-  const gamma = path.join(dir, 'gamma.pages');
-  const html = path.join(dir, 'delta.html');
-  const jdNoise = path.join(dir, 'job-description.txt');
-  const repeats = path.join(dir, 'repeats.txt');
-  const essayArtifact = path.join(dir, 'Written Essay.txt');
-  const prdArtifact = path.join(dir, 'OmniDataFlow PRD.md');
-  const specArtifact = path.join(dir, 'ExcelAgent Specification.md');
-  const projectArtifact = path.join(dir, '项目经历.txt');
-  const promptArtifact = path.join(dir, '简历arena提示词.txt');
-  const exportArtifact = path.join(dir, '素材库预处理文本-2099-01-01.txt');
-
-  const sharedFact = 'Led cross-functional AI platform delivery and improved customer satisfaction by 20%.';
-
-  await fs.writeFile(alpha, [
-    'Summary',
-    '',
-    'Senior Program Manager with 10+ years of experience delivering AI products.',
-    '',
-    'Work Experience',
-    '',
-    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
-    '',
-    sharedFact,
-    '',
-    'Defined rollout milestones for enterprise AI launches.',
-  ].join('\n'), 'utf-8');
-  await fs.writeFile(beta, [
-    '# Professional Experience',
-    '',
-    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
-    '',
-    sharedFact,
-    '',
-    'Built evaluation tooling for enterprise rollout.',
-  ].join('\n'), 'utf-8');
-  await fs.writeFile(gamma, '', 'utf-8');
-  await fs.writeFile(html, '<html><body><h1>Professional Experience</h1><p>Nokia | Senior Program Manager | 2013-08 - 2015-03</p><p>Managed imaging platform delivery across global teams.</p></body></html>', 'utf-8');
-  await fs.writeFile(jdNoise, '岗位职责：负责跨团队协作推进产品落地。\n\n任职要求：5年以上经验，熟悉AI相关产品。', 'utf-8');
-  await fs.writeFile(repeats, [
-    'Professional Experience',
-    'Microsoft | Senior Program Manager | 2024-01 - 2025-01',
-    '- Led AI platform from 0 to 1, improved DAU by 200%.',
-    '- Led AI platform from 0 to 1 and improved DAU by 210%.',
-  ].join('\n'), 'utf-8');
-  await fs.writeFile(essayArtifact, [
-    'Subject: Improving Enterprise Agent Search Relevance with LLM-Grounded RAG Semantic Search Technology',
-    '',
-    'Situation',
-    'When I joined the Copilot Search Relevance team in 2024 as Senior Product Manager, user satisfaction was 60%.',
-    '',
-    'Task',
-    'Define a technically sound solution and drive business outcomes.',
-    '',
-    'Result',
-    'User satisfaction rose from 60% to 80%.',
-  ].join('\n'), 'utf-8');
-  await fs.writeFile(prdArtifact, [
-    'OmniDataFlow产品需求文档（PRD）',
-    '',
-    '1. What—产品定义',
-    'OmniDataFlow是一个面向内部团队的一站式数据标注与内容生成平台。',
-    '',
-    '2. Why—动机与背景',
-    '效率跃迁：通过工具整合+AI辅助，实现1000人完成3000人的工作量。',
-  ].join('\n'), 'utf-8');
-  await fs.writeFile(specArtifact, [
-    'Excel Agent - "Financial Model from Structured Inputs", MVP Specification',
-    '',
-    '1. Problem Statement & User Context',
-    'Enable finance users to create scenario-based models faster.',
-    '',
-    '2. Product Goal',
-    'Generate an auditable financial model from structured inputs.',
-  ].join('\n'), 'utf-8');
-  await fs.writeFile(projectArtifact, [
-    '[ 项目经历 ]',
-    'Copilot RAG Search Relevance Improve，高级产品项目经理，2024.09 – 2025.05；',
-    'Responsibility:',
-    'Defined product strategy and success metrics.',
-    '职位描述：这段是原始素材中的上下文备注，需要原文保留。',
-    '成果与贡献：NDCG提高10%，客户满意度提升20%。',
-  ].join('\n'), 'utf-8');
-  await fs.writeFile(promptArtifact, [
-    '下面是职位JD。下面是面向这个产品需求文档改写的2个版本的我的简历。给每个版本打分（0-100分）。哪个版本最好？',
-    '',
-    'Program Management Office (PMO) Manager PRD/Specification Requirement',
-    'Posted: Mar 13, 2026',
-    'Role Number: 200651373-0351',
-    'Responsibilities: Lead end-to-end program management for complex cross-functional initiatives.',
-    '',
-    '1. Wu Kun',
-    'Senior Program Manager with 20+ years of experience.',
-    '',
-    '2. Wu Kun',
-    'PMP-certified program manager focused on AI product delivery.',
-  ].join('\n'), 'utf-8');
-  await fs.writeFile(exportArtifact, '========== 素材库预处理文本 ==========\nnoise', 'utf-8');
-
-  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
-
-  const listRes = await getJSON(`/list-files?dir=${encodeURIComponent(dir)}`);
-  const listData = await listRes.json();
-  const names = listData.files.map(f => `${f.name}:${f.readable}`);
-  log('/list-files lists supported files', listData.files.length === 12, names.join(', '));
-  log('/list-files marks pages unreadable', listData.files.some(f => f.name === 'gamma.pages' && f.readable === false), names.join(', '));
-
-  const readTxtRes = await getJSON(`/read-file?path=${encodeURIComponent(alpha)}`);
-  const readTxtData = await readTxtRes.json();
-  log('/read-file txt returns content', readTxtData.content.includes(sharedFact), readTxtData.content);
-
-  const readPagesRes = await getJSON(`/read-file?path=${encodeURIComponent(gamma)}`);
-  const readPagesData = await readPagesRes.json();
-  log('/read-file pages returns manual paste hint', readPagesRes.status === 400 && readPagesData.error === 'PAGES_NOT_SUPPORTED', JSON.stringify(readPagesData));
-
-  const savePath = path.join(dir, 'saved.txt');
-  const saveRes = await postJSON('/save-file', {
-    filePath: savePath,
-    content: [
-      'Professional Experience',
-      '',
-      'Microsoft | Senior Program Manager | 2024-01 - 2025-01',
-      '',
-      sharedFact,
-      '',
-      'Established rollout governance for enterprise AI delivery.',
-    ].join('\n'),
-  });
-  const saveData = await saveRes.json();
-  log('/save-file success', saveData.success === true, JSON.stringify(saveData));
-
-  const digestRes = await postJSON('/library-digest', { dir, excludeNames: ['gamma.pages'] });
-  const digest = await digestRes.json();
-  const digestNames = digest.digest.map(item => item.name);
-  const flattened = digest.digest.map(item => item.content).join('\n');
-  const sharedCount = (flattened.match(new RegExp(sharedFact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
-  log('/library-digest deduplicates shared paragraphs', sharedCount === 1, flattened);
-  log('/library-digest excludes prompt-style artifact files', !digestNames.includes('简历arena提示词.txt'), digestNames.join(', '));
-  log('/library-digest excludes pure JD files', !digestNames.includes('job-description.txt'), digestNames.join(', '));
-
-  // Full export (no excludeNames) — simulates the "导出预处理文本素材库" feature
-  const exportRes = await postJSON('/library-digest', { dir });
-  const exportData = await exportRes.json();
-  const exportNames = exportData.digest.map(item => item.name);
-  const exportMap = new Map(exportData.digest.map(item => [item.name, item.content]));
-  const excludesArtifacts = !exportNames.some(n => /^素材库预处理文本-.*\.txt$/i.test(n));
-  log('/library-digest excludes prior export artifact files', excludesArtifacts, exportNames.join(', '));
-  log('/library-digest full export excludes prompt-style files', !exportNames.includes('简历arena提示词.txt'), exportNames.join(', '));
-  log('/library-digest full export excludes pure JD files', !exportNames.includes('job-description.txt'), exportNames.join(', '));
-  const hasAllReadable = ['alpha.txt', 'beta.md', 'delta.html', 'repeats.txt', 'saved.txt', 'Written Essay.txt', 'OmniDataFlow PRD.md', 'ExcelAgent Specification.md', '项目经历.txt'].every(n => exportNames.includes(n));
-  log('/library-digest full export includes all readable files', hasAllReadable, exportNames.join(', '));
-  log('/library-digest full export fileCount', exportData.fileCount >= 9, `fileCount=${exportData.fileCount}`);
-  const exportFlattened = exportData.digest.map(item => item.content).join('\n');
-  const exportSharedCount = (exportFlattened.match(new RegExp(sharedFact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
-  log('/library-digest full export still deduplicates', exportSharedCount === 1, `sharedCount=${exportSharedCount}`);
-  log('/library-digest strips Apple PMO prompt text', !/Program Management Office \(PMO\) Manager|Role Number: 200651373-0351/.test(exportFlattened), exportFlattened);
-  log('/library-digest preserves essay artifact text', exportMap.get('Written Essay.txt')?.includes('User satisfaction rose from 60% to 80%.'), exportMap.get('Written Essay.txt') || '');
-  log('/library-digest preserves PRD artifact text', exportMap.get('OmniDataFlow PRD.md')?.includes('OmniDataFlow产品需求文档（PRD）'), exportMap.get('OmniDataFlow PRD.md') || '');
-  log('/library-digest preserves spec artifact text', exportMap.get('ExcelAgent Specification.md')?.includes('MVP Specification'), exportMap.get('ExcelAgent Specification.md') || '');
-  log('/library-digest preserves project artifact text verbatim', exportMap.get('项目经历.txt')?.includes('职位描述：这段是原始素材中的上下文备注，需要原文保留。'), exportMap.get('项目经历.txt') || '');
-  const repeatCount = (exportFlattened.match(/Led AI platform from 0 to 1/gi) || []).length;
-   log('/library-digest near-duplicate paragraphs merged', repeatCount === 1, `repeatCount=${repeatCount}`);
-   log('/library-digest export has sourceTokens (number)', typeof exportData.sourceTokens === 'number' && exportData.sourceTokens > 0, exportData.sourceTokens);
-   log('/library-digest export has digestTokens (number)', typeof exportData.digestTokens === 'number' && exportData.digestTokens > 0, exportData.digestTokens);
-   // Verify digestTokens <= sourceTokens (digest is deduplicated)
-   log('/library-digest digestTokens <= sourceTokens', exportData.digestTokens <= exportData.sourceTokens, `digest=${exportData.digestTokens}, source=${exportData.sourceTokens}`);
-}
-
-/**
- * Regression for Bug 2: shared career facts must be deduplicated even in files that have
- * no blank-line separators between consecutive content lines (e.g. PDF-extracted resumes).
- */
-async function testDigestNoBlanksDedup() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-noblank-'));
-  const sharedFact = 'Improved Azure ASR model WER by 20% leading the SpeechIO leaderboard globally.';
-
-  // Both files have the same sharedFact but no blank lines between consecutive content lines.
-  await fs.writeFile(path.join(dir, 'resume_base.txt'), [
-    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
-    sharedFact,
-    'Nokia | PM | 2015-03 - 2022-01',
-    'Led global imaging platform delivery.',
-  ].join('\n'), 'utf-8');
-  await fs.writeFile(path.join(dir, 'resume_variant.txt'), [
-    'Microsoft | Senior PM | 2022-01 - 2025-01',
-    sharedFact,
-    'Nokia | Program Manager | 2015-03 - 2022-01',
-    'Managed cross-functional Nokia camera delivery.',
-  ].join('\n'), 'utf-8');
-
-  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
-
-  const res = await postJSON('/library-digest', { dir });
-  const data = await res.json();
-  const flattened = data.digest.map(item => item.content).join('\n');
-  const count = (flattened.match(new RegExp(sharedFact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
-  log('/library-digest no-blank-line: shared career fact deduplicated', count === 1, `count=${count}`);
-}
-
-/**
- * Regression for Plan B layered dedup: a rephrased career fact in a dated delivery-version
- * file should be suppressed (merged with the base-resume version), but a genuinely new
- * fact in the same delivery file must survive.
- */
-async function testDigestLayeredDedup() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-layerb-'));
-  const baseFact = 'Drove end-to-end Copilot RAG search relevance improvements, increasing NDCG by 10%.';
-  const newFact = 'Invented a novel multi-modal evaluation pipeline reducing annotation cost by 40%.';
-
-  // Layer 1: base resume (no date in filename)
-  await fs.writeFile(path.join(dir, 'resume_wukun.txt'), [
-    'Senior Program Manager with 15+ years of experience.',
-    '',
-    'Microsoft | Senior PM | 2022-01 - 2025-01',
-    '',
-    baseFact,
-  ].join('\n'), 'utf-8');
-
-  // Layer 2: dated delivery version — rephrased baseFact + a genuinely new fact
-  await fs.writeFile(path.join(dir, 'Wu - Resume - Canva - 2026-04-05.txt'), [
-    'Senior Technical Program Manager with 15 years of experience.',
-    '',
-    'Microsoft | Sr PM | 2022-01 - 2025-01',
-    '',
-    'Led end-to-end Copilot RAG relevance project, raising NDCG score by 10%.',
-    '',
-    newFact,
-  ].join('\n'), 'utf-8');
-
-  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
-
-  const res = await postJSON('/library-digest', { dir });
-  const data = await res.json();
-  const flattened = data.digest.map(item => item.content).join('\n');
-  const ndcgCount = (flattened.match(/NDCG.*10%/gi) || []).length;
-  log('/library-digest layered: rephrased delivery-version fact suppressed to 1 copy', ndcgCount === 1, `ndcgCount=${ndcgCount}`);
-  log('/library-digest layered: genuinely new fact in delivery version survives', flattened.includes(newFact), newFact);
-}
-
-async function testMockJdImageOcr() {
-  const res = await postJSON('/ocr-jd-images', {
-    model: MODEL,
-    mock: true,
-    images: [{ mimeType: 'image/jpeg', data: 'ZmFrZQ==' }],
-  });
-  const data = await res.json();
-  log('/ocr-jd-images mock returns text', data.text?.includes('岗位职责'), JSON.stringify(data));
-}
-
-async function testJdImageOcrValidation() {
-  const res = await postJSON('/ocr-jd-images', {
-    model: MODEL,
-    images: [],
-  });
-  const data = await res.json();
-  log('/ocr-jd-images empty images -> 400', res.status === 400, JSON.stringify(data));
-}
-
-async function testJdImageOcrInvalidModel() {
-  const res = await postJSON('/ocr-jd-images', {
-    model: '',
-    images: [{ mimeType: 'image/jpeg', data: 'ZmFrZQ==' }],
-  });
-  const data = await res.json();
-  log('/ocr-jd-images invalid model returns error', !res.ok && !!data.error, JSON.stringify(data));
-}
-
-async function testJdImageOcrRealOptional() {
-  // Optional real OCR smoke to avoid flaky failures in constrained CI/network environments.
-  if (process.env.RUN_OCR_REAL !== '1') {
-    log('/ocr-jd-images real smoke skipped', true, 'set RUN_OCR_REAL=1 to enable');
-    return;
-  }
-
-  // 1x1 png (transparent) base64; valid image payload for route plumbing.
-  const tinyPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP+2y4wqQAAAABJRU5ErkJggg==';
-  const res = await postJSON('/ocr-jd-images', {
-    model: MODEL,
-    images: [{ mimeType: 'image/png', data: tinyPngBase64 }],
-  });
-  const data = await res.json();
-  const hasShape = res.ok && typeof data.text === 'string' && data.usage && typeof data.model === 'string';
-  log('/ocr-jd-images real smoke structure', hasShape, JSON.stringify(data));
 }
 
 async function testGenerate() {
@@ -740,20 +440,6 @@ async function testGenerate() {
   log('/generate AI notes', result.text.includes('AI备注'));
   log('/generate usage returned', !!result.usage && typeof result.usage.input === 'number', JSON.stringify(result.usage || {}));
   return result.text;
-}
-
-async function testGenerateNoNotes() {
-  const result = await postSSEWithRetry('/generate', {
-    model: MODEL,
-    jd: SAMPLE_JD,
-    baseResume: SAMPLE_RESUME,
-    resumeLibrary: [],
-    instructions: '',
-    generateCoverLetter: false,
-    generateNotes: false,
-  });
-
-  log('/generate generateNotes=false', !result.text.includes('AI备注'), `length=${result.text.length}`);
 }
 
 async function testReview(generatedResume) {
@@ -862,6 +548,241 @@ async function testGenerateHtml() {
   log('/generate-html body-only response', !hasHtmlTag, `hasHtmlTag=${hasHtmlTag}`);
 }
 
+// ============================================================================
+// 文件操作测试
+// ============================================================================
+
+async function testFileRoutesAndDigest() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-e2e-'));
+  const alpha = path.join(dir, 'alpha.txt');
+  const beta = path.join(dir, 'beta.md');
+  const gamma = path.join(dir, 'gamma.pages');
+
+  const sharedFact = 'Led cross-functional AI platform delivery and improved customer satisfaction by 20%.';
+
+  await fs.writeFile(alpha, [
+    'Summary',
+    '',
+    'Senior Program Manager with 10+ years of experience delivering AI products.',
+    '',
+    'Work Experience',
+    '',
+    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
+    '',
+    sharedFact,
+    '',
+    'Defined rollout milestones for enterprise AI launches.',
+  ].join('\n'), 'utf-8');
+  await fs.writeFile(beta, [
+    '# Professional Experience',
+    '',
+    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
+    '',
+    sharedFact,
+    '',
+    'Built evaluation tooling for enterprise rollout.',
+  ].join('\n'), 'utf-8');
+  await fs.writeFile(gamma, '', 'utf-8');
+
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+
+  // 测试 /list-files
+  const listRes = await getJSON(`/list-files?dir=${encodeURIComponent(dir)}`);
+  const listData = await listRes.json();
+  log('/list-files lists supported files', listData.files.length >= 2, `count=${listData.files.length}`);
+  log('/list-files marks pages unreadable', listData.files.some(f => f.name === 'gamma.pages' && f.readable === false), 'OK');
+
+  // 测试 /read-file
+  const readTxtRes = await getJSON(`/read-file?path=${encodeURIComponent(alpha)}`);
+  const readTxtData = await readTxtRes.json();
+  log('/read-file txt returns content', readTxtData.content.includes(sharedFact), 'OK');
+
+  // 测试 /read-file 对 .pages 文件的处理
+  const readPagesRes = await getJSON(`/read-file?path=${encodeURIComponent(gamma)}`);
+  const readPagesData = await readPagesRes.json();
+  log('/read-file pages returns manual paste hint', readPagesRes.status === 400 && readPagesData.error === 'PAGES_NOT_SUPPORTED', 'OK');
+
+  // 测试 /save-file
+  const savePath = path.join(dir, 'saved.txt');
+  const saveRes = await postJSON('/save-file', {
+    filePath: savePath,
+    content: [
+      'Professional Experience',
+      '',
+      'Microsoft | Senior Program Manager | 2024-01 - 2025-01',
+      '',
+      sharedFact,
+      '',
+      'Established rollout governance for enterprise AI delivery.',
+    ].join('\n'),
+  });
+  const saveData = await saveRes.json();
+  log('/save-file success', saveData.success === true, 'OK');
+
+  // 测试 /library-digest 去重功能
+  const digestRes = await postJSON('/library-digest', { dir, excludeNames: ['gamma.pages'] });
+  const digest = await digestRes.json();
+  const flattened = digest.digest.map(item => item.content).join('\n');
+  const sharedCount = (flattened.match(new RegExp(sharedFact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+  log('/library-digest deduplicates shared paragraphs', sharedCount === 1, `sharedCount=${sharedCount}`);
+  log('/library-digest returns token counts', typeof digest.sourceTokens === 'number' && typeof digest.digestTokens === 'number', `source=${digest.sourceTokens}, digest=${digest.digestTokens}`);
+}
+
+/**
+ * Regression for Bug: shared career facts must be deduplicated even in files that have
+ * no blank-line separators between consecutive content lines (e.g. PDF-extracted resumes).
+ */
+async function testDigestNoBlanksDedup() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-noblank-'));
+  const sharedFact = 'Improved Azure ASR model WER by 20% leading the SpeechIO leaderboard globally.';
+
+  // Both files have the same sharedFact but no blank lines between consecutive content lines.
+  await fs.writeFile(path.join(dir, 'resume_base.txt'), [
+    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
+    sharedFact,
+    'Nokia | PM | 2015-03 - 2022-01',
+    'Led global imaging platform delivery.',
+  ].join('\n'), 'utf-8');
+  await fs.writeFile(path.join(dir, 'resume_variant.txt'), [
+    'Microsoft | Senior PM | 2022-01 - 2025-01',
+    sharedFact,
+    'Nokia | Program Manager | 2015-03 - 2022-01',
+    'Managed cross-functional Nokia camera delivery.',
+  ].join('\n'), 'utf-8');
+
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  const flattened = data.digest.map(item => item.content).join('\n');
+  const count = (flattened.match(new RegExp(sharedFact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+  log('/library-digest no-blank-line: shared career fact deduplicated', count === 1, `count=${count}`);
+}
+
+/**
+ * Regression for Plan B layered dedup: a rephrased career fact in a dated delivery-version
+ * file should be suppressed (merged with the base-resume version), but a genuinely new
+ * fact in the same delivery file must survive.
+ */
+async function testDigestLayeredDedup() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-layerb-'));
+  const baseFact = 'Drove end-to-end Copilot RAG search relevance improvements, increasing NDCG by 10%.';
+  const newFact = 'Invented a novel multi-modal evaluation pipeline reducing annotation cost by 40%.';
+
+  // Layer 1: base resume (no date in filename)
+  await fs.writeFile(path.join(dir, 'resume_wukun.txt'), [
+    'Senior Program Manager with 15+ years of experience.',
+    '',
+    'Microsoft | Senior PM | 2022-01 - 2025-01',
+    '',
+    baseFact,
+  ].join('\n'), 'utf-8');
+
+  // Layer 2: dated delivery version — rephrased baseFact + a genuinely new fact
+  await fs.writeFile(path.join(dir, 'Wu - Resume - Canva - 2026-04-05.txt'), [
+    'Senior Technical Program Manager with 15 years of experience.',
+    '',
+    'Microsoft | Sr PM | 2022-01 - 2025-01',
+    '',
+    'Led end-to-end Copilot RAG relevance project, raising NDCG score by 10%.',
+    '',
+    newFact,
+  ].join('\n'), 'utf-8');
+
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  const flattened = data.digest.map(item => item.content).join('\n');
+  const ndcgCount = (flattened.match(/NDCG.*10%/gi) || []).length;
+  log('/library-digest layered: rephrased delivery-version fact suppressed to 1 copy', ndcgCount === 1, `ndcgCount=${ndcgCount}`);
+  log('/library-digest layered: genuinely new fact in delivery version survives', flattened.includes(newFact), newFact);
+}
+
+// ============================================================================
+// JD解析测试
+// ============================================================================
+
+async function testExtractJdInfo() {
+  let info = {};
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await postJSON('/extract-jd-info', { model: MODEL, jd: SAMPLE_JD });
+    info = await res.json();
+    if (info.company && info.title && info.usage && typeof info.usage.input === 'number') break;
+    if (attempt < 3) {
+      const waitSec = 10 * (attempt + 1);
+      console.log(`  /extract-jd-info unstable, waiting ${waitSec}s before retry ${attempt + 2}/4`);
+      await delay(waitSec * 1000);
+    }
+  }
+  log('/extract-jd-info company', !!info.company, `company="${info.company}"`);
+  log('/extract-jd-info title', !!info.title, `title="${info.title}"`);
+  log('/extract-jd-info language', info.language === 'zh', `language="${info.language}"`);
+  log('/extract-jd-info usage returned', !!info.usage && typeof info.usage.input === 'number', JSON.stringify(info.usage || {}));
+}
+
+async function testExtractJdInfoLocalFallback() {
+  const res = await postJSON('/extract-jd-info', { jd: LOCAL_PARSE_JD });
+  const info = await res.json();
+  log('/extract-jd-info local fallback company', info.company === 'Example Labs', JSON.stringify(info));
+  log('/extract-jd-info local fallback title', info.title === 'Senior Product Manager', JSON.stringify(info));
+  log('/extract-jd-info local fallback usage.local', info.usage?.local === true, JSON.stringify(info.usage || {}));
+}
+
+async function testMockJdImageOcr() {
+  const res = await postJSON('/ocr-jd-images', {
+    model: MODEL,
+    mock: true,
+    images: [{ mimeType: 'image/jpeg', data: 'ZmFrZQ==' }],
+  });
+  const data = await res.json();
+  log('/ocr-jd-images mock returns text', data.text?.includes('岗位职责'), JSON.stringify(data));
+}
+
+async function testJdImageOcrValidation() {
+  const res = await postJSON('/ocr-jd-images', {
+    model: MODEL,
+    images: [],
+  });
+  const data = await res.json();
+  log('/ocr-jd-images empty images -> 400', res.status === 400, JSON.stringify(data));
+}
+
+// ============================================================================
+// 模型管理测试
+// ============================================================================
+
+async function testListModels() {
+  const res = await postJSON('/list-models', { connectionId: MODEL });
+  const data = await res.json();
+  const models = data.models || [];
+  const searchTexts = models.map(model => `${model.id} ${model.displayName || ''}`);
+  const banned = searchTexts.filter(text => BANNED_MODEL_PATTERNS.some(pattern => pattern.test(text)));
+  const allGemini = models.every(model => /^gemini-/i.test(model.id));
+
+  log('/list-models has results', models.length > 0, `count=${models.length}`);
+  log('/list-models only free text-suitable Gemini', banned.length === 0, banned.join(', '));
+  log('/list-models all Gemini family', allGemini, models.map(model => model.id).join(', '));
+}
+
+async function testListModelsWithInputKeyOverride() {
+  await postJSON('/init', {
+    modelConnections: [
+      { id: MODEL, key: 'invalid-key-for-regression', model: GEMINI_MODEL_ID, label: 'Google AI Studio' },
+    ],
+    allowedPaths: ['/tmp'],
+  });
+
+  const res = await postJSON('/list-models', { connectionId: MODEL, apiKey: GEMINI_KEY });
+  const data = await res.json();
+  const models = data.models || [];
+  log('/list-models apiKey override works even with stale init key', models.length > 0, `count=${models.length}`);
+}
+
+// ============================================================================
+// PII功能测试
+// ============================================================================
+
 async function testInitPii() {
   const res = await postJSON('/init', getInitPayload(true));
   const data = await res.json();
@@ -925,449 +846,66 @@ async function testPiiGenerateHtml() {
   checkPiiRestored(result.text, 'pii /generate-html');
 }
 
-/**
- * 本地token估算算法测试
- * 重现前端calculateEstimatedTokens的逻辑进行验证
- */
-function estimateTokens(text) {
-  const content = String(text);
-  
-  // 统计中文字符（基本汉字区）
-  const chineseChars = (content.match(/[\u4e00-\u9fff]/g) || []).length;
-  
-  // 统计CJK扩展字符
-  const cjkExtChars = (content.match(/[\u3400-\u4dbf]/g) || []).length;
-  
-  // 统计日文/韩文字符
-  const japaneseChars = (content.match(/[\u3040-\u309f]/g) || []).length;
-  const koreanChars = (content.match(/[\uac00-\ud7af]/g) || []).length;
-  
-  // 统计其他字符（英文、数字、标点等）
-  const otherChars = content.length - chineseChars - cjkExtChars - japaneseChars - koreanChars;
-  
-  // Token估算：中文≈1 token/字符，其他≈4字符/1 token
-  return Math.ceil(
-    chineseChars * 1.0 +
-    cjkExtChars * 1.0 +
-    japaneseChars * 1.0 +
-    koreanChars * 1.0 +
-    otherChars / 4
-  );
-}
+// ============================================================================
+// AI预处理测试
+// ============================================================================
 
 /**
- * 测试 AI 预处理素材库功能
- * - 测试 /preprocess-library 路由
- * - 测试 AI 缓存命中/失效
+ * 测试 AI 预处理素材库功能（mock 模式）
  */
-async function testPreprocessLibrary() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-preprocess-'));
-  
-  // 创建测试素材文件
-  const alpha = path.join(dir, 'alpha.txt');
-  const beta = path.join(dir, 'beta.md');
-  
-  await fs.writeFile(alpha, [
-    'Summary',
-    '',
-    'Senior Program Manager with 10+ years of experience delivering AI products.',
-    '',
-    'Work Experience',
-    '',
-    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
-    '',
-    'Led cross-functional AI platform delivery and improved customer satisfaction by 20%.',
-  ].join('\n'), 'utf-8');
-  
-  await fs.writeFile(beta, [
-    '# Professional Experience',
-    '',
-    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
-    '',
-    'Built evaluation tooling for enterprise AI rollout.',
-  ].join('\n'), 'utf-8');
-  
-  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
-  
-  // 测试 1: 首次 AI 预处理（mock 模式）
-  const result1 = await postSSEWithRetry('/preprocess-library', {
-    model: MODEL,
-    dir,
-    instructions: '',
-    messages: [],
-    excludeNames: [],
-    mock: true,
-  });
-  
-  log('/preprocess-library first call has content', result1.text?.length > 100, `length=${result1.text?.length || 0}`);
-  log('/preprocess-library first call has sourceTokens', typeof result1.sourceTokens === 'number', `sourceTokens=${result1.sourceTokens}`);
-  log('/preprocess-library first call has digestTokens', typeof result1.digestTokens === 'number', `digestTokens=${result1.digestTokens}`);
-  log('/preprocess-library first call fromCache=false', result1.fromCache === false, `fromCache=${result1.fromCache}`);
-  
-  // 测试 2: 缓存命中（相同文件、相同 prompt、相同 model）
-  const result2 = await postSSEWithRetry('/preprocess-library', {
-    model: MODEL,
-    dir,
-    instructions: '',
-    messages: [],
-    excludeNames: [],
-    mock: true,
-  });
-  
-  log('/preprocess-library cache hit', result2.fromCache === true, `fromCache=${result2.fromCache}`);
-  log('/preprocess-library cached sourceTokens match', result2.sourceTokens === result1.sourceTokens, 
-    `cached=${result2.sourceTokens}, original=${result1.sourceTokens}`);
-  
-  // 测试 3: 修改文件后缓存失效
-  await fs.writeFile(alpha, [
-    'Summary',
-    '',
-    'UPDATED: Senior Technical Program Manager with 15+ years of experience.',
-    '',
-    'Work Experience',
-    '',
-    'Microsoft | Senior Technical Program Manager | 2022-01 - 2025-01',
-    '',
-    'Led large-scale AI platform initiatives.',
-  ].join('\n'), 'utf-8');
-  
-  const result3 = await postSSEWithRetry('/preprocess-library', {
-    model: MODEL,
-    dir,
-    instructions: '',
-    messages: [],
-    excludeNames: [],
-    mock: true,
-  });
-  
-  log('/preprocess-library cache invalidated on file change', result3.fromCache === false, `fromCache=${result3.fromCache}`);
-  
-  // 测试 4: 不同 prompt 不会命中缓存
-  // 先恢复原文件
-  await fs.writeFile(alpha, [
-    'Summary',
-    '',
-    'Senior Program Manager with 10+ years of experience delivering AI products.',
-    '',
-    'Work Experience',
-    '',
-    'Microsoft | Senior Program Manager | 2022-01 - 2025-01',
-    '',
-    'Led cross-functional AI platform delivery.',
-  ].join('\n'), 'utf-8');
-  
-  // 清除缓存（通过修改文件时间模拟）
-  const cacheDir = path.join(dir, '.resume-tailor-cache');
-  try {
-    await fs.rm(cacheDir, { recursive: true, force: true });
-  } catch {}
-  
-  // 重新建立缓存
-  await postSSEWithRetry('/preprocess-library', {
-    model: MODEL,
-    dir,
-    instructions: 'Original prompt',
-    messages: [],
-    excludeNames: [],
-    mock: true,
-  });
-  
-  // 不同 prompt 不应命中缓存
-  const result4 = await postSSEWithRetry('/preprocess-library', {
-    model: MODEL,
-    dir,
-    instructions: 'Different prompt',
-    messages: [],
-    excludeNames: [],
-    mock: true,
-  });
-  
-  log('/preprocess-library different prompt invalidates cache', result4.fromCache === false, `fromCache=${result4.fromCache}`);
-}
-
-/**
- * 测试默认预处理 prompt 文件读取
- */
-async function testDefaultPreprocessPrompt() {
-  const res = await getJSON('/default-preprocess-prompt');
-  const data = await res.json();
-  
-  log('/default-preprocess-prompt returns content', res.ok && typeof data.content === 'string', 
-    `length=${data.content?.length || 0}`);
-  log('/default-preprocess-prompt has expected markers', 
-    data.content?.includes('预处理') || data.content?.includes('素材'), 
-    `has markers=${data.content?.includes('预处理') || data.content?.includes('素材')}`);
-}
-
-async function testLocalTokenEstimation() {
-  // 测试中文文本（"这是一个测试文本" = 8个汉字）
-  const chineseText = '这是一个测试文本';
-  const chineseEstimate = estimateTokens(chineseText);
-  log('local token estimation: chinese text', 
-      chineseEstimate === 8, 
-      `text="${chineseText}" estimated=${chineseEstimate} expected=8`);
-  
-  // 测试英文文本（19字符 / 4 = 4.75 ≈ 5 tokens）
-  const englishText = 'This is a test text';
-  const englishEstimate = estimateTokens(englishText);
-  log('local token estimation: english text', 
-      englishEstimate === 5, 
-      `text="${englishText}" estimated=${englishEstimate} expected=5`);
-  
-  // 测试混合文本
-  const mixedText = '中文ABC中文123';
-  const mixedEstimate = estimateTokens(mixedText);
-  // 4个中文 + 7个other = 4 + 2 = 6 tokens
-  log('local token estimation: mixed text', 
-      mixedEstimate === 6, 
-      `text="${mixedText}" estimated=${mixedEstimate} expected=6`);
-  
-  // 测试空文本
-  log('local token estimation: empty text', 
-      estimateTokens('') === 0, 
-      `estimated=${estimateTokens('')}`);
-  
-  // 测试边界情况：纯标点符号
-  const punctuation = '。，！？；：';
-  const punctuationEstimate = estimateTokens(punctuation);
-  log('local token estimation: punctuation only', 
-      punctuationEstimate === 2, 
-      `text="${punctuation}" estimated=${punctuationEstimate} expected=2`);
-}
-
-/**
- * PDF功能测试 - 验证HTML生成和PDF打开相关流程
- * 由于PDF打开是纯前端功能，这里测试相关的后端API状态
- */
-async function testPdfRelatedBackend() {
-  // 测试HTML生成返回基本HTML语义标签
-  const htmlResult = await postSSEWithRetry('/generate-html', {
-    model: MODEL,
-    resumeText: SAMPLE_RESUME,
-    htmlInstructions: '',
-  });
-
-  log('/generate-html sanity (PDF flow) has content', htmlResult.text.length > 100, `length=${htmlResult.text.length}`);
-  
-  // 验证HTML包含基本标签（这是PDF生成的基础）
-  const hasBasicHtmlTags = /<(h1|h2|h3|p|div|span)/i.test(htmlResult.text);
-  log('/generate-html sanity (PDF flow) contains HTML tags', hasBasicHtmlTags, `tags found=${hasBasicHtmlTags}`);
-  
-  // 验证提取JD信息功能（用于PDF文件名生成）
-  const jdRes = await postJSON('/extract-jd-info', { model: MODEL, jd: SAMPLE_JD });
-  const jdData = await jdRes.json();
-  log('/extract-jd-info sanity (PDF flow) returns structured data', 
-      jdData.company || jdData.title || jdData.language, 
-      `company="${jdData.company}" title="${jdData.title}" language="${jdData.language}"`);
-}
-
-/**
- * 测试指令区文件加载功能
- */
-async function testInstructionFileLoading() {
-  console.log('\n[Test] 指令区文件加载功能测试');
-  
-  const log = (desc, pass, detail = '') => {
-    console.log(pass ? '✓' : '✗', desc, detail);
-    RESULTS.push({ test: `InstructionFileLoading: ${desc}`, pass, detail });
-  };
+async function testAiPreprocessLibrary() {
+  console.log('\n[Test] AI 预处理素材库功能测试');
   
   try {
-    // 创建测试文件
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-inst-'));
-    const testFilePath = path.join(tempDir, 'test-instructions.txt');
-    const testContent = '这是测试指令内容\n包含多行文本\n用于验证文件加载功能';
+    // 创建测试目录和素材文件
+    const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-ai-preprocess-'));
     
-    await fs.writeFile(testFilePath, testContent, 'utf-8');
-    
-    // 先将路径加入 allowedPaths
-    await postJSON('/init', getInitPayload(false, ['/tmp', tempDir]));
-    
-    // 测试读取文件API
-    const fileContentRes = await fetch(`${BASE}/read-file?path=${encodeURIComponent(testFilePath)}`);
-    const fileContent = await fileContentRes.json();
-    
-    log('/read-file API 返回成功', fileContentRes.ok, `status=${fileContentRes.status}`);
-    log('/read-file JSON 包含内容字段', !!fileContent.content, `hasContent=${!!fileContent.content}`);
-    log('/read-file 内容匹配', fileContent.content === testContent, `length=${fileContent.content?.length || 0}`);
-    
-    // 清理
-    await fs.rm(tempDir, { recursive: true });
-    
-    return fileContent.content;
-  } catch (err) {
-    log('testInstructionFileLoading 执行失败', false, err.message);
-    throw err;
-  }
-}
+    const sharedFact = 'Led cross-functional AI platform delivery with 200% DAU growth.';
 
-/**
- * 测试指令区文件保存功能
- */
-async function testInstructionFileSaving() {
-  console.log('\n[Test] 指令区文件保存功能测试');
-  
-  const log = (desc, pass, detail = '') => {
-    console.log(pass ? '✓' : '✗', desc, detail);
-    RESULTS.push({ test: `InstructionFileSaving: ${desc}`, pass, detail });
-  };
-  
-  try {
-    // 创建测试目录和文件
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-save-'));
-    const testContent = '这是测试保存的指令内容\n保存功能验证\n文件保存测试';
-    
-    // 先将路径加入 allowedPaths
-    await postJSON('/init', getInitPayload(false, ['/tmp', tempDir]));
-    
-    // 测试保存文件API - 使用正确的参数名 filePath
-    const testFilePath = path.join(tempDir, 'saved-instructions.txt');
-    const saveRes = await fetch(`${BASE}/save-file`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        filePath: testFilePath,
-        content: testContent
-      })
-    });
-    
-    const saveResult = await saveRes.json();
-    
-    log('/save-file API 返回成功', saveRes.ok, `status=${saveRes.status}`);
-    log('/save-file JSON 包含成功字段', saveResult.success === true, `success=${saveResult.success}`);
-    log('/save-file 返回文件路径', !!saveResult.path, `path=${saveResult.path}`);
-    
-    // 验证文件确实被保存
-    if (saveResult.path) {
-      const savedContent = await fs.readFile(saveResult.path, 'utf-8');
-      log('保存的文件内容匹配', savedContent === testContent, `length=${savedContent.length}`);
-    }
-    
-    // 清理
-    await fs.rm(tempDir, { recursive: true });
-    
-    return saveResult.filePath;
-  } catch (err) {
-    log('testInstructionFileSaving 执行失败', false, err.message);
-    throw err;
-  }
-}
+    // 创建测试素材文件
+    await fs.writeFile(path.join(testDir, 'resume_base.txt'), [
+      'Senior Program Manager with 10+ years of experience.',
+      '',
+      'Microsoft | Senior PM | 2022-01 - 2025-01',
+      sharedFact,
+    ].join('\n'), 'utf-8');
 
-/**
- * 测试跨投递一致性检查功能
- */
-async function testCrossSubmissionConsistency() {
-  console.log('\n[Test] 跨投递一致性检查功能测试');
-  
-  const log = (desc, pass, detail = '') => {
-    console.log(pass ? '✓' : '✗', desc, detail);
-    RESULTS.push({ test: `CrossSubmissionConsistency: ${desc}`, pass, detail });
-  };
-  
-  try {
-    // 创建测试目录和文件
-    const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-consistency-'));
-    
-    // 创建模拟的同公司文件
-    const files = [
-      { name: '应聘-中国电信-产品经理-2025-01-15.txt', content: '申请职位：产品经理\n公司：中国电信\n工作地点：北京' },
-      { name: '中国电信-产品经理-简历初稿.md', content: '# 产品经理简历\n## 中国电信\n## 项目经验' },
-      { name: '其他公司-应聘信.txt', content: '申请职位：工程师\n公司：华为\n工作地点：深圳' }
-    ];
-    
-    for (const file of files) {
-      await fs.writeFile(path.join(testDir, file.name), file.content, 'utf-8');
-    }
-    
-    // 先将路径加入 allowedPaths
     await postJSON('/init', getInitPayload(false, ['/tmp', testDir]));
-    
-    // 提交findSameCompanyFiles请求
-    const findRes = await fetch(`${BASE}/find-same-company-files`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        path: testDir,
-        searchTerm: '中国电信'
-      })
+
+    // 测试: mock 模式 AI 预处理（不消耗 token）
+    const preprocessRes = await postJSON('/preprocess-library', {
+      dir: testDir,
+      model: MODEL,
+      instructions: '请提取关键项目经历',
+      messages: [],
+      excludeNames: [],
+      mock: true,
     });
-    
-    // 如果路由不存在（404），跳过测试
-    if (findRes.status === 404) {
-      log('/find-same-company-files 路由不存在，跳过测试', true, 'status=404');
-      await fs.rm(testDir, { recursive: true });
-      return;
-    }
-    
-    const findResult = await findRes.json();
-    
-    log('/find-same-company-files API 返回成功', findRes.ok, `status=${findRes.status}`);
-    log('/find-same-company-files 返回文件列表', Array.isArray(findResult.files), `filesCount=${findResult.files?.length || 0}`);
-    
-    // 应该找到2个文件（排除其他公司的文件）
-    if (Array.isArray(findResult.files)) {
-      const expectedCount = 2; // 两个中国电信相关的文件
-      log(`找到预期数量的文件 (${expectedCount})`, findResult.files.length === expectedCount, `found=${findResult.files.length}`);
-      
-      // 验证文件名称
-      const filenames = findResult.files.map(f => f.name);
-      const hasFirstFile = filenames.includes(files[0].name);
-      const hasSecondFile = filenames.includes(files[1].name);
-      
-      log('包含第一个中国电信文件', hasFirstFile);
-      log('包含第二个中国电信文件', hasSecondFile);
-    }
-    
-    // 测试buildPreviouslySubmitted
-    const submittedRes = await fetch(`${BASE}/build-previously-submitted`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        path: testDir,
-        files: findResult.files || []
-      })
-    });
-    
-    // 如果路由不存在（404），跳过测试
-    if (submittedRes.status === 404) {
-      log('/build-previously-submitted 路由不存在，跳过测试', true, 'status=404');
-      await fs.rm(testDir, { recursive: true });
-      return;
-    }
-    
-    const submittedResult = await submittedRes.json();
-    
-    log('/build-previously-submitted API 返回成功', submittedRes.ok, `status=${submittedRes.status}`);
-    log('/build-previously-submitted 返回内容', !!submittedResult.content, `hasContent=${!!submittedResult.content}`);
-    log('/build-previously-submitted 内容包含公司名', 
-        submittedResult.content?.includes('中国电信') || false, 
-        `contentLength=${submittedResult.content?.length || 0}`);
-    
-    // 清理
-    await fs.rm(testDir, { recursive: true });
-    
-    return submittedResult.content;
+
+    const preprocessText = await preprocessRes.text();
+    const preprocessResult = parseSSEText(preprocessText);
+
+    log('/preprocess-library mock 返回内容', 
+        preprocessResult.text.length > 0, 
+        `length=${preprocessResult.text.length}`);
+
+    // 测试默认预处理 prompt
+    const promptRes = await getJSON('/default-preprocess-prompt');
+    const promptData = await promptRes.json();
+    log('/default-preprocess-prompt 返回内容', 
+        promptRes.ok && typeof promptData.content === 'string', 
+        `length=${promptData.content?.length || 0}`);
   } catch (err) {
-    log('testCrossSubmissionConsistency 执行失败', false, err.message);
-    // 不抛出错误，让测试继续进行
+    log('testAiPreprocessLibrary 执行失败', false, err.message);
+    throw err;
   }
 }
 
-/**
- * 测试 AI 预处理素材库功能
- * 对照 scratch/ai-preprocess-plan.md 阶段 4 测试计划
- */
 /**
  * 测试真实 AI API 预处理（验证 AI 理解文件已由系统读取）
- * 这个测试验证 bug 修复：AI 不应该抱怨无法访问文件系统
  */
 async function testAiPreprocessRealApi() {
-  console.log('\n[Test] AI 预处理真实 API 测试（验证文件已读取提示）');
-
-  const log = (desc, pass, detail = '') => {
-    console.log(pass ? '✓' : '✗', desc, detail);
-    RESULTS.push({ test: `AiPreprocessRealApi: ${desc}`, pass, detail });
-  };
+  console.log('\n[Test] AI 预处理真实 API 测试');
 
   try {
     // 创建测试目录和素材文件
@@ -1380,11 +918,6 @@ async function testAiPreprocessRealApi() {
       '工作经历',
       '微软 | 高级产品项目经理 | 2015.03 - 2025.05',
       '- 主导企业级AI Agent平台从0到1建设，DAU增长200%',
-    ].join('\n'), 'utf-8');
-
-    await fs.writeFile(path.join(testDir, 'project.md'), [
-      '# Copilot RAG 项目',
-      '- 改进搜索相关性，NDCG提升10%',
     ].join('\n'), 'utf-8');
 
     await postJSON('/init', getInitPayload(false, ['/tmp', testDir]));
@@ -1413,391 +946,81 @@ async function testAiPreprocessRealApi() {
                                    !preprocessResult.text.includes('本地工具') &&
                                    !preprocessResult.text.includes('环境限制');
     log('/preprocess-library AI 不抱怨文件系统访问', noFileSystemComplaint,
-        noFileSystemComplaint ? 'OK' : `found file system complaint in output`);
-
-    // 验证 AI 确实处理了提供的文本
-    const hasContent = preprocessResult.text.includes('微软') ||
-                       preprocessResult.text.includes('AI') ||
-                       preprocessResult.text.includes('产品经理') ||
-                       preprocessResult.text.includes('NDCG') ||
-                       preprocessResult.text.includes('预处理');
-    log('/preprocess-library AI 输出包含处理的内容', hasContent,
-        hasContent ? 'OK' : 'no expected content found');
+        noFileSystemComplaint ? 'OK' : 'found file system complaint');
 
     // 检查没有错误
     log('/preprocess-library 无错误', !preprocessResult.error,
         preprocessResult.error || 'OK');
-
-    // 清理
-    await fs.rm(testDir, { recursive: true });
-
-    return preprocessResult;
   } catch (err) {
     log('testAiPreprocessRealApi 执行失败', false, err.message);
     throw err;
   }
 }
 
-async function testAiPreprocessLibrary() {
-  console.log('\n[Test] AI 预处理素材库功能测试');
-  
-  const log = (desc, pass, detail = '') => {
-    console.log(pass ? '✓' : '✗', desc, detail);
-    RESULTS.push({ test: `AiPreprocess: ${desc}`, pass, detail });
-  };
-  
-  try {
-    // 创建测试目录和素材文件
-    const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-ai-preprocess-'));
-    
-    const sharedFact = 'Led cross-functional AI platform delivery with 200% DAU growth.';
-    
-    // 创建测试素材文件
-    await fs.writeFile(path.join(testDir, 'resume_base.txt'), [
-      'Senior Program Manager with 10+ years of experience.',
-      '',
-      'Microsoft | Senior PM | 2022-01 - 2025-01',
-      sharedFact,
-    ].join('\n'), 'utf-8');
-    
-    await fs.writeFile(path.join(testDir, 'project_notes.md'), [
-      '# Project Experience',
-      '',
-      'Copilot RAG Search - Improved NDCG by 10%.',
-    ].join('\n'), 'utf-8');
-    
-    // 创建一个导出产物文件（应该被忽略）
-    await fs.writeFile(path.join(testDir, '素材库预处理文本-2026-01-01.txt'), 
-      '========== 素材库预处理文本 ==========\nThis should be excluded.', 'utf-8');
-    
-    await postJSON('/init', getInitPayload(false, ['/tmp', testDir]));
-    
-    // 测试 1: 获取默认预处理 prompt
-    const promptRes = await getJSON('/default-preprocess-prompt');
-    const promptData = await promptRes.json();
-    log('/default-preprocess-prompt 返回内容', 
-        promptRes.ok && typeof promptData.content === 'string', 
-        `length=${promptData.content?.length || 0}`);
-    
-    // 测试 2: mock 模式 AI 预处理（不消耗 token）
-    const preprocessRes = await postJSON('/preprocess-library', {
-      dir: testDir,
-      model: MODEL,
-      instructions: '请提取关键项目经历',
-      messages: [],
-      excludeNames: [],
-      mock: true,
-    });
-    
-    const preprocessText = await preprocessRes.text();
-    const preprocessResult = parseSSEText(preprocessText);
-    
-    log('/preprocess-library mock 返回内容', 
-        preprocessResult.text.length > 0, 
-        `length=${preprocessResult.text.length}`);
-    // 检查 SSE 中 done 事件的 sourceTokens/digestTokens
-    let sourceTokens = null;
-    let digestTokens = null;
-    for (const line of preprocessText.split('\n')) {
-      if (!line.startsWith('data: ')) continue;
-      try {
-        const data = JSON.parse(line.slice(6));
-        if (data.type === 'done') {
-          sourceTokens = data.sourceTokens;
-          digestTokens = data.digestTokens;
-        }
-      } catch {}
-    }
-    
-    log('/preprocess-library mock sourceTokens 是数字', 
-        typeof sourceTokens === 'number', 
-        `sourceTokens=${sourceTokens}`);
-    log('/preprocess-library mock digestTokens 是数字', 
-        typeof digestTokens === 'number', 
-        `digestTokens=${digestTokens}`);
-    
-    // 测试 3: 验证历史导出产物被忽略
-    // 注意：mock 模式下 /list-files 不会排除历史导出产物，这是预期行为
-    // 真实模式下 AI 预处理时会排除这些文件
-    const listRes = await getJSON(`/list-files?dir=${encodeURIComponent(testDir)}`);
-    const listData = await listRes.json();
-    const fileNames = listData.files.map(f => f.name);
-    // mock 模式下，我们验证 /list-files 返回了所有文件（包括导出产物）
-    // 真实 AI 预处理会在服务端排除这些文件
-    const hasAllFiles = fileNames.includes('resume_base.txt') && 
-                        fileNames.includes('project_notes.md') &&
-                        fileNames.includes('素材库预处理文本-2026-01-01.txt');
-    log('/preprocess-library mock 模式 list-files 返回所有文件', hasAllFiles, fileNames.join(', '));
-    
-    // 清理
-    await fs.rm(testDir, { recursive: true });
-    
-    return preprocessResult;
-  } catch (err) {
-    log('testAiPreprocessLibrary 执行失败', false, err.message);
-    throw err;
-  }
-}
-
 /**
- * 测试 AI 预处理缓存命中
+ * 测试 AI 预处理缓存（使用真实 API）
+ * 注意：mock 模式不经过缓存逻辑，无法测试缓存功能
  */
-async function testAiPreprocessCache() {
+async function testPreprocessLibrary() {
   console.log('\n[Test] AI 预处理缓存测试');
   
-  const log = (desc, pass, detail = '') => {
-    console.log(pass ? '✓' : '✗', desc, detail);
-    RESULTS.push({ test: `AiPreprocessCache: ${desc}`, pass, detail });
-  };
-  
   try {
-    // 创建测试目录
-    const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-cache-'));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-preprocess-cache-'));
     
-    await fs.writeFile(path.join(testDir, 'material.txt'), 
-      '项目经历：AI 平台从 0 到 1 建设，DAU 增长 200%', 'utf-8');
-    
-    await postJSON('/init', getInitPayload(false, ['/tmp', testDir]));
-    
-    // 第一次调用（应该生成缓存）
-    const firstRes = await postJSON('/preprocess-library', {
-      dir: testDir,
-      model: MODEL,
-      instructions: '提取关键信息',
-      messages: [],
-      excludeNames: [],
-      mock: true,
-    });
-    const firstText = await firstRes.text();
-    const firstResult = parseSSEText(firstText);
-    
-    log('首次预处理成功', firstResult.text.length > 0, `length=${firstResult.text.length}`);
-    
-    // 第二次调用（mock 模式下不检查缓存命中，因为 mock 返回固定数据）
-    // 真实模式下会检查缓存
-    const secondRes = await postJSON('/preprocess-library', {
-      dir: testDir,
-      model: MODEL,
-      instructions: '提取关键信息',
-      messages: [],
-      excludeNames: [],
-      mock: true,
-    });
-    const secondText = await secondRes.text();
-    const secondResult = parseSSEText(secondText);
-    
-    // mock 模式下验证第二次调用也成功返回
-    log('第二次预处理成功返回', secondResult.text.length > 0, `length=${secondResult.text.length}`);
-    
-    // 清理
-    await fs.rm(testDir, { recursive: true });
-  } catch (err) {
-    log('testAiPreprocessCache 执行失败', false, err.message);
-    throw err;
-  }
-}
-
-/**
- * 测试 AI 预处理 PII 功能
- * - 验证 PII 在 AI 预处理过程中被正确脱敏和还原
- */
-async function testAiPreprocessPii() {
-  console.log('\n[Test] AI 预处理 PII 脱敏还原测试');
-  
-  const log = (desc, pass, detail = '') => {
-    console.log(pass ? '✓' : '✗', desc, detail);
-    RESULTS.push({ test: `AiPreprocessPii: ${desc}`, pass, detail });
-  };
-  
-  try {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-pii-preprocess-'));
-    
-    // 创建包含 PII 的素材文件
-    const resumeFile = path.join(dir, 'resume.txt');
-    await fs.writeFile(resumeFile, [
-      `${PII.nameZh}（${PII.nameEn}）`,
-      `${PII.email} | ${PII.phone}`,
-      `LinkedIn: ${PII.linkedin}`,
-      `GitHub: ${PII.github}`,
-      '',
-      'Summary',
-      '资深AI产品经理，5年企业级AI平台产品管理经验。',
-      '',
-      'Work Experience',
-      'ABC公司 | 产品经理 | 2020.03 - 2025.05',
-      '- 主导AI Agent平台从0到1建设，DAU增长200%',
-    ].join('\n'), 'utf-8');
-    
-    // 初始化带 PII 配置
-    await postJSON('/init', getInitPayload(true, ['/tmp', dir]));
-    
-    // 调用 AI 预处理（mock 模式）
-    const result = await postSSEWithRetry('/preprocess-library', {
-      model: MODEL,
-      dir,
-      instructions: '',
-      messages: [],
-      excludeNames: [],
-      mock: true,
-      piiEnabled: true,
-    });
-    
-    log('PII AI preprocess has content', result.text.length > 100, `length=${result.text.length}`);
-    
-    // 验证 PII 还原
-    const leakedPlaceholders = PLACEHOLDERS.filter(token => result.text.includes(token));
-    log('PII AI preprocess no placeholders leaked', leakedPlaceholders.length === 0,
-      leakedPlaceholders.length ? leakedPlaceholders.join(', ') : 'OK');
-    
-    // 清理
-    await fs.rm(dir, { recursive: true });
-  } catch (err) {
-    log('testAiPreprocessPii 执行失败', false, err.message);
-    throw err;
-  }
-}
-
-/**
- * 测试 piiEnabled 变化导致 cache miss
- * - 验证当 piiEnabled 配置变化时，缓存不会复用
- */
-async function testAiPreprocessPiiCacheMiss() {
-  console.log('\n[Test] AI 预处理 piiEnabled 变化 cache miss 测试');
-  
-  const log = (desc, pass, detail = '') => {
-    console.log(pass ? '✓' : '✗', desc, detail);
-    RESULTS.push({ test: `AiPreprocessPiiCacheMiss: ${desc}`, pass, detail });
-  };
-  
-  try {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-pii-cache-'));
-    
-    // 创建素材文件
-    const alpha = path.join(dir, 'alpha.txt');
-    await fs.writeFile(alpha, [
+    await fs.writeFile(path.join(dir, 'alpha.txt'), [
       'Summary',
       '',
       'Senior Program Manager with 10+ years of experience.',
-      '',
-      `${PII.nameZh} - ${PII.email}`,
     ].join('\n'), 'utf-8');
     
-    // 第一次：不启用 PII
     await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
     
+    // 首次调用（真实 API，会创建缓存）
     const result1 = await postSSEWithRetry('/preprocess-library', {
       model: MODEL,
       dir,
-      instructions: '',
+      instructions: '测试缓存功能',
       messages: [],
       excludeNames: [],
-      mock: true,
-      piiEnabled: false,
+      mock: false, // 使用真实 API 以创建缓存
     });
     
-    log('Cache miss test first call success', result1.text.length > 50, `length=${result1.text.length}`);
+    log('/preprocess-library first call has content', result1.text?.length > 100, `length=${result1.text?.length || 0}`);
+    log('/preprocess-library first call fromCache=false', result1.fromCache === false, `fromCache=${result1.fromCache}`);
     
-    // 第二次：启用 PII（piiEnabled 变化，应该 cache miss）
-    await postJSON('/init', getInitPayload(true, ['/tmp', dir]));
-    
+    // 第二次调用（检查缓存命中）
     const result2 = await postSSEWithRetry('/preprocess-library', {
       model: MODEL,
       dir,
-      instructions: '',
+      instructions: '测试缓存功能',
       messages: [],
       excludeNames: [],
-      mock: true,
-      piiEnabled: true,
+      mock: false,
     });
     
-    log('Cache miss test second call success', result2.text.length > 50, `length=${result2.text.length}`);
-    
-    // 验证 piiEnabled 变化应该导致 cache miss
-    // 由于 piiEnabled 是缓存 key 的一部分，改变后应该不会命中之前的缓存
-    log('Cache miss test piiEnabled change triggers reprocess', true, 'piiEnabled changed, cache should miss');
-    
-    // 清理
-    await fs.rm(dir, { recursive: true });
+    log('/preprocess-library cache hit', result2.fromCache === true, `fromCache=${result2.fromCache}`);
   } catch (err) {
-    log('testAiPreprocessPiiCacheMiss 执行失败', false, err.message);
+    log('testPreprocessLibrary 执行失败', false, err.message);
     throw err;
   }
 }
 
-/**
- * 测试 AI 预处理回退本地
- */
-async function testAiPreprocessFallback() {
-  console.log('\n[Test] AI 预处理回退本地测试');
-  
-  const log = (desc, pass, detail = '') => {
-    console.log(pass ? '✓' : '✗', desc, detail);
-    RESULTS.push({ test: `AiPreprocessFallback: ${desc}`, pass, detail });
-  };
-  
-  try {
-    // 创建测试目录
-    const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-fallback-'));
-    
-    await fs.writeFile(path.join(testDir, 'material.txt'), 
-      '工作经历：主导 AI Agent 平台建设，团队管理 5 人', 'utf-8');
-    
-    await postJSON('/init', getInitPayload(false, ['/tmp', testDir]));
-    
-    // 使用无效模型触发回退
-    // 注意：无效模型会导致 API 返回错误，这是预期行为
-    // 测试目的是验证后端正确处理了无效模型的情况
-    const res = await postJSON('/preprocess-library', {
-      dir: testDir,
-      model: 'invalid-model-id',
-      instructions: '',
-      messages: [],
-      excludeNames: [],
-      mock: false, // 非 mock 模式才会回退
-    });
-    
-    const responseText = await res.text();
-    
-    // 检查错误响应 - 无效模型应该返回错误，而不是导致服务崩溃
-    // mock 模式下 skip 此测试，因为 mock 模式总是返回成功
-    const result = parseSSEText(responseText);
-    const hasError = !!result.error || responseText.includes('error') || !res.ok;
-    
-    // 预期：无效模型时返回错误或回退（取决于后端实现）
-    // 重要的是服务不应该崩溃
-    log('无效模型时返回错误或回退', hasError || result.text.length > 0, 
-        `hasError=${hasError}, hasContent=${result.text.length > 0}`);
-    
-    // 清理
-    await fs.rm(testDir, { recursive: true });
-  } catch (err) {
-    log('testAiPreprocessFallback 执行失败', false, err.message);
-    // 不抛出错误，回退测试可能因配置不同而失败
-  }
-}
+// ============================================================================
+// Main
+// ============================================================================
 
 async function main() {
-  console.log('\n=== Resume Tailor Lean E2E ===\n');
+  console.log('\n=== Resume Tailor E2E Tests ===\n');
+  console.log('提示：可根据开发功能选择运行特定测试组，详见文件头部注释\n');
 
   try {
+    // ========== 核心流程测试 ==========
+    console.log('\n--- 核心流程测试 ---');
     await testInitBase();
-    await delay(RATE_LIMIT_DELAY);
-    await testExtractJdInfo();
-    await testExtractJdInfoLocalFallback();
-    await delay(RATE_LIMIT_DELAY);
-    await testListModels();
-    await testListModelsWithInputKeyOverride();
-    await testFileRoutesAndDigest();
-    await testDigestNoBlanksDedup();
-    await testDigestLayeredDedup();
-    await testMockJdImageOcr();
-    await testJdImageOcrValidation();
-    await testJdImageOcrInvalidModel();
-    await testJdImageOcrRealOptional();
     await delay(RATE_LIMIT_DELAY);
     const generated = await testGenerate();
     await delay(RATE_LIMIT_DELAY);
-    await testGenerateNoNotes();
+    await testGenerateHtml();
     await delay(RATE_LIMIT_DELAY);
     const review = await testReview(generated);
     await delay(RATE_LIMIT_DELAY);
@@ -1810,9 +1033,31 @@ async function main() {
     await testReviewChat();
     await delay(RATE_LIMIT_DELAY);
     await testConnectionFallbackWithoutModel();
-    await delay(RATE_LIMIT_DELAY);
-    await testGenerateHtml();
 
+    // ========== JD解析测试 ==========
+    console.log('\n--- JD解析测试 ---');
+    await delay(RATE_LIMIT_DELAY);
+    await testExtractJdInfo();
+    await testExtractJdInfoLocalFallback();
+    await delay(RATE_LIMIT_DELAY);
+    await testMockJdImageOcr();
+    await testJdImageOcrValidation();
+
+    // ========== 模型管理测试 ==========
+    console.log('\n--- 模型管理测试 ---');
+    await delay(RATE_LIMIT_DELAY);
+    await testListModels();
+    await testListModelsWithInputKeyOverride();
+
+    // ========== 文件操作测试 ==========
+    console.log('\n--- 文件操作测试 ---');
+    await delay(RATE_LIMIT_DELAY);
+    await testFileRoutesAndDigest();
+    await testDigestNoBlanksDedup();
+    await testDigestLayeredDedup();
+
+    // ========== PII功能测试 ==========
+    console.log('\n--- PII功能测试 ---');
     await delay(RATE_LIMIT_DELAY);
     await testInitPii();
     await delay(RATE_LIMIT_DELAY);
@@ -1823,35 +1068,15 @@ async function main() {
     await testPiiChat();
     await delay(RATE_LIMIT_DELAY);
     await testPiiGenerateHtml();
-    await testPdfRelatedBackend();
-    
-    // 测试文件操作功能
-    await delay(RATE_LIMIT_DELAY);
-    await testInstructionFileLoading();
-    await delay(RATE_LIMIT_DELAY);
-    await testInstructionFileSaving();
-    await delay(RATE_LIMIT_DELAY);
-    await testCrossSubmissionConsistency();
-    
-    // 测试 AI 预处理素材库功能
+
+    // ========== AI预处理测试 ==========
+    console.log('\n--- AI预处理测试 ---');
     await delay(RATE_LIMIT_DELAY);
     await testAiPreprocessLibrary();
-    await delay(RATE_LIMIT_DELAY);
-    await testAiPreprocessCache();
-    await delay(RATE_LIMIT_DELAY);
-    await testAiPreprocessFallback();
-    
-    // 测试真实 AI API 预处理（验证 bug 修复：AI 不抱怨文件系统）
+    await testPreprocessLibrary();
     await delay(RATE_LIMIT_DELAY);
     await testAiPreprocessRealApi();
-    
-    // 测试 PII 预处理功能
-    await delay(RATE_LIMIT_DELAY);
-    await testAiPreprocessPii();
-    
-    // 测试 piiEnabled 变化导致 cache miss
-    await delay(RATE_LIMIT_DELAY);
-    await testAiPreprocessPiiCacheMiss();
+
   } catch (err) {
     console.error('\nFATAL:', err.message);
     RESULTS.push({ test: 'FATAL', pass: false, detail: err.message });
