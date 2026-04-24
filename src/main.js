@@ -382,8 +382,19 @@ function resolveReviewerConnectionIds(currentValues = [], savedValues = [], defa
   const configuredIds = getConfiguredConnectionIds();
   if (!configuredIds.length) return [];
 
+  // 优先使用当前选择的值
+  if (currentValues.length > 0) {
+    const selected = [];
+    for (const candidate of currentValues) {
+      const id = migrateConnectionId(candidate);
+      if (id && configuredIds.includes(id) && !selected.includes(id)) selected.push(id);
+    }
+    if (selected.length > 0) return selected;
+  }
+
+  // 当前没有选择时，才使用保存的值或默认值
   const selected = [];
-  for (const candidate of [...currentValues, ...(Array.isArray(savedValues) ? savedValues : []), defaultValue]) {
+  for (const candidate of [...(Array.isArray(savedValues) ? savedValues : []), defaultValue]) {
     const id = migrateConnectionId(candidate);
     if (id && configuredIds.includes(id) && !selected.includes(id)) selected.push(id);
   }
