@@ -125,6 +125,7 @@ vscCCOpus/
 | Generator | 简历/求职信生成 | 单选下拉 | `jiekou-anthropic` |
 | Reviewer | 简历评审 | 多选复选框 | `google-studio-google` |
 | Format Converter | HTML 转换；在本地 OCR 质量差时作为 JD 图片 OCR 的 AI 兜底 | 单选下拉 | `google-studio-google` |
+| Preprocessor | 素材库 AI 预处理（可选） | 单选下拉 | `google-studio-google` |
 
 补充说明：
 - `Orchestrator` 作为可配置角色在“设置”中可见；用于 JD 解析及评审合并协调
@@ -175,6 +176,8 @@ connectionId === 'jiekou-anthropic'      → Anthropic SDK (anthropic.js)
 | POST | `/generate-html` | 生成 HTML | SSE |
 | POST | `/extract-jd-info` | 从 JD 提取公司/部门/职位 | No |
 | POST | `/ocr-jd-images` | JD 图片 OCR 的 AI 兜底（仅用户主动触发） | No |
+| GET | `/default-preprocess-prompt` | 读取默认预处理 prompt 文件 | No |
+| POST | `/preprocess-library` | AI 预处理素材库 | SSE |
 
 ### `/init` 请求格式（新格式）
 ```json
@@ -507,6 +510,99 @@ Mock 数据包含：
 
 ---
 
+### 7.7 AI 预处理素材库功能
+
+#### 功能概述
+
+用户可选择使用 AI 来预处理简历素材库，AI 预处理能够更智能地提取、整理和优化素材内容。
+
+#### 核心设计决策
+
+1. **AI 预处理与本地预处理隔离**：
+   - AI 预处理仅影响"导出预处理文本素材库"链路
+   - 不改变 generate/review 的现有本地预处理逻辑
+   - `digest.json` 缓存通过 `mode` 字段区分：`local` vs `ai`
+
+2. **缓存语义**：
+   - AI 缓存命中条件：素材文件未变化 + 预处理 prompt 未变化 + preprocessor model 未变化
+   - 本地缓存和 AI 缓存互相独立，避免污染
+
+#### 前端 UI
+
+1. **Settings Agent 配置**：
+   - 新增 Preprocessor Agent 下拉选择器
+   - 默认使用 `google-studio-google`（免费 Gemini）
+
+2. **素材库区域新增**：
+   - "使用 AI 预处理" 复选框
+   - 预处理指令 `<details>` 区域（类似 genInstructions）
+   - "和预处理助手对话（确认/追问）" 对话区域
+
+3. **导出按钮行为**：
+   - 未勾选 AI 时：走本地预处理（现有逻辑不变）
+   - 勾选 AI 时：读取原始素材 → AI 预处理 → 保存 digest.json → 导出 txt
+
+#### 后端 API
+
+| 路由 | 说明 |
+|------|------|
+| `GET /api/default-preprocess-prompt` | 读取默认 prompt 文件 |
+| `POST /api/preprocess-library` | AI 预处理素材库 |
+
+#### POST /api/preprocess-library 请求格式
+
+```json
+{
+  "dir": "/path/to/library",
+  "model": "gemini-2.5-flash",
+  "instructions": "用户自定义预处理指令",
+  "messages": [{ "role": "user", "content": "..." }],
+  "excludeNames": ["排除的文件名"]
+}
+```
+
+#### 预处理输出协议
+
+AI 预处理使用分隔符协议，便于流式展示后解析：
+
+- `===== 预处理文本开始 =====` ... `===== 预处理文本结束 =====` — 表示完成
+- `===== 需要用户确认 =====` — 表示仍需用户输入
+
+#### 缓存 schema 升级
+
+`digest.json` 新格式：
+
+```json
+{
+  "version": "v7",
+  "mode": "ai",
+  "key": "hash-of-files+prompt+model",
+  "digest": [{ "name": "__ai_preprocessed__", "content": "..." }],
+  "exportText": "完整预处理文本",
+  "sourceTokens": 1000,
+  "digestTokens": 600,
+  "updatedAt": "2026-04-23T..."
+}
+```
+
+#### Token 统计
+
+预处理对话区显示：
+- `sourceTokens`：原始素材 token 数
+- `digestTokens`：预处理后 token 数
+
+#### 失败回退
+
+AI 预处理失败时自动回退到本地预处理，并在系统消息中提示"已回退到本地预处理"。
+
+#### 默认 Prompt 来源
+
+硬编码路径：`/Users/wukun/Documents/jl/预处理-prompt.md`
+
+用户未输入自定义 prompt 时，通过 `/api/default-preprocess-prompt` 读取该文件作为默认值。
+
+---
+
 ## 13. 已知限制
 
 - `.pages` 文件不支持自动解析，提示用户手动粘贴
@@ -652,6 +748,7 @@ Mock 数据包含：
 | 2026-04-05 | 多供应商模型配置系统重构 | 架构重构 | - |
 | 2026-04-04 | HTML 助手对话 + PDF 上传 + 多项 Bug 修复 | 功能增强 | - |
 | 2026-04-03 | 初始版本发布 | 初始版本 | - |
+| 2026-04-23 | AI 预处理素材库功能：新增 Preprocessor Agent、预处理指令区、预处理对话区、缓存隔离 | 功能增强 | - |
 | 2026-04-23 | 指令区文件加载/保存功能 + 端到端测试 | 功能增强及测试 | - |
 
 > 详细变更内容可通过 `git log` 或 GitHub commit history 查看。

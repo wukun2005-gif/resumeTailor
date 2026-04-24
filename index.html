@@ -145,6 +145,10 @@
             <label>Format Converter（HTML转换 / 图片OCR兜底）</label>
             <select id="cfgAgentHtml"></select>
           </div>
+          <div class="form-row">
+            <label>Preprocessor（素材库 AI 预处理）</label>
+            <select id="cfgAgentPreprocessor"></select>
+          </div>
         </fieldset>
 
         <fieldset>
@@ -236,10 +240,37 @@
             <button id="exportDigestBtn" class="btn-secondary" disabled title="将素材库预处理为纯文本文件，供其他AI工具直接使用">导出预处理文本素材库</button>
             <span id="exportDigestStatus" class="status-text"></span>
           </div>
+          <label class="checkbox-label" style="margin-top: 4px;" title="使用 AI 进行素材库预处理，效果更好但消耗 Token">
+            <input type="checkbox" id="useAiPreprocess"> 使用 AI 预处理
+          </label>
         </div>
         <div class="form-row">
           <label for="baseResumeSelect">基础简历 <span class="required">*</span></label>
           <select id="baseResumeSelect"><option value="">— 先加载素材库 —</option></select>
+        </div>
+      </div>
+
+      <!-- AI Preprocessing Instructions -->
+      <details class="collapsible" id="preprocessInstructionsSection" style="display:none">
+        <summary>预处理指令（AI 处理素材库的注意事项）</summary>
+        <div class="instruction-toolbar">
+          <label class="btn-secondary btn-sm">
+            加载文件
+            <input type="file" id="preprocessLoadFile" accept=".txt,.md,.html,.pdf,.docx" style="display:none">
+          </label>
+          <button id="preprocessSaveFile" class="btn-secondary btn-sm">保存到文件</button>
+          <span id="preprocessFileStatus" class="status-text"></span>
+        </div>
+        <textarea id="preprocessInstructions" rows="12" placeholder="输入 AI 预处理素材库时的注意事项和要求..."></textarea>
+      </details>
+
+      <!-- Preprocessing Chat Section -->
+      <div class="chat-section" id="preprocessChatSection" style="display:none">
+        <h4>和预处理助手对话（确认/追问）</h4>
+        <div id="preprocessChatHistory" class="chat-history"></div>
+        <div class="chat-input-row">
+          <textarea id="preprocessChatInput" rows="4" placeholder="回答预处理助手的问题，或追问..."></textarea>
+          <button id="preprocessChatSendBtn" class="btn-primary btn-sm">发送</button>
         </div>
       </div>
 

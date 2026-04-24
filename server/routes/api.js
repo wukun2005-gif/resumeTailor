@@ -3,8 +3,8 @@ import { initGemini, callGemini, listGeminiModels } from '../services/gemini.js'
 import { initAnthropic, callAnthropic } from '../services/anthropic.js';
 import { initOpenAICompat, callOpenAICompat } from '../services/openai-compat.js';
 import { readFileContent, listResumeFiles } from '../services/fileReader.js';
-import { getLibraryDigest, appendToDigestCache } from '../services/libraryCache.js';
-import { getResumeGenerationPrompt, getReviewPrompt, getReviewPromptConcise, getReviewMergePrompt, getHtmlGenerationPrompt, getApplyReviewPrompt } from '../prompts/templates.js';
+import { getLibraryDigest, appendToDigestCache, getAiPreprocessedLibrary, saveAiDigestCache, readRawLibraryFiles } from '../services/libraryCache.js';
+import { getResumeGenerationPrompt, getReviewPrompt, getReviewPromptConcise, getReviewMergePrompt, getHtmlGenerationPrompt, getApplyReviewPrompt, getLibraryPreprocessPrompt } from '../prompts/templates.js';
 import { setPiiConfig, getPiiEntries, sanitizeRequestBody, sanitizeLibrary, sanitizeMessages, createStreamRestorer } from '../services/piiSanitizer.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -546,6 +546,279 @@ ${jd}`;
   } catch (err) {
     res.json({ company: '', department: '', title: '', language: 'en' });
   }
+});
+
+// ============================================================================
+// AI Preprocessing Routes
+// ============================================================================
+
+// Hardcoded path for default preprocess prompt
+const DEFAULT_PREPROCESS_PROMPT_PATH = '/Users/wukun/Documents/jl/预处理-prompt.md';
+
+/**
+ * GET /api/default-preprocess-prompt
+ * Returns the default preprocessing prompt from hardcoded path.
+ */
+router.get('/default-preprocess-prompt', async (req, res) => {
+  try {
+    const content = await fs.readFile(DEFAULT_PREPROCESS_PROMPT_PATH, 'utf-8');
+    res.json({ content });
+  } catch (err) {
+    // Return a basic default if file not found
+    res.json({ 
+      content: `你是一位简历素材库预处理工程师。请处理以下素材库文件，按照以下原则：
+
+1. 严格不推断 — 不从 A+B 合成 C；不补全未出现的数字/Title/技术名/年份
+2. 不改写原文措辞 — 保留中英文、缩写、大小写、标点原样
+3. 保守 lossless 压缩 — 重复段落相似度 ≥ 0.82 才能删除
+4. 完整 provenance — 每条事实标注来源文件名
+5. 冲突不融合 — 同一事实不同说法时，两版都保留并标记 ⚠ [冲突]
+
+输出格式：
+===== 预处理文本开始 =====
+[预处理内容]
+===== 预处理文本结束 =====` 
+    });
+  }
+});
+
+// Mock preprocessing output for testing
+const MOCK_PREPROCESS = `===== 预处理文本开始 =====
+╔════════════════════════════════════════════════════════════════╗
+║ 简历素材预处理纯文本文件
+║ Generated: 2026-04-23 20:40
+║ Source files: 3 份
+║ Source tokens: ~15,000
+║ Output tokens: ~8,000
+╚════════════════════════════════════════════════════════════════╝
+
+# §1. 基础事实简历（完整原文保留）
+
+## §1.1 resume_base.txt
+吴坤
+AI平台产品经理
+
+工作经历：
+微软（中国）| 高级产品项目经理 | 2015.03 – 2025.05
+• 主导企业级Agent RAG平台从0到1建设...
+
+# §10. 自检报告
+- [x] 源文件扫描总数：3
+- [x] 无任何字段是本 AI 推理/合成出来的 ✓
+
+===== 预处理文本结束 =====`;
+
+/**
+ * POST /api/preprocess-library
+ * AI preprocessing of resume library.
+ * 
+ * Request body:
+ * - dir: library directory path
+ * - model: model connection ID
+ * - instructions: user's preprocessing instructions
+ * - messages: chat messages for multi-turn conversation
+ * - excludeNames: file names to exclude
+ * - mock: if true, return mock response
+ * 
+ * Response: SSE stream
+ * - type: 'chunk' | 'system' | 'done' | 'error'
+ * - For 'done': includes sourceTokens, digestTokens, exportText, fromCache, fallbackUsed
+ */
+router.post('/preprocess-library', async (req, res) => {
+  const { dir, model, instructions, messages, excludeNames, mock } = req.body;
+  
+  if (!dir) {
+    return res.status(400).json({ error: '需要提供素材库路径' });
+  }
+
+  try {
+    const validDir = validatePath(dir);
+    
+    // Get PII entries for sanitization
+    const piiEntries = getPiiEntries();
+    const piiEnabled = piiEntries.length > 0;
+
+    // Check AI cache first (with piiEnabled for cache validation)
+    const cached = await getAiPreprocessedLibrary(validDir, instructions, model, piiEnabled);
+    if (cached) {
+      setupSSE(res);
+      // Restore PII in cached export text before sending to user
+      let restoredExportText = cached.exportText;
+      if (piiEntries.length > 0) {
+        const { restore } = await import('../services/piiSanitizer.js');
+        restoredExportText = restore(restoredExportText, piiEntries);
+      }
+      sendSSE(res, { 
+        type: 'system', 
+        message: `✓ 命中AI预处理缓存\n  - 源文件 tokens: ${cached.sourceTokens.toLocaleString()}\n  - 预处理后 tokens: ${cached.digestTokens.toLocaleString()}\n  - 压缩比: ${cached.sourceTokens > 0 ? Math.round((1 - cached.digestTokens / cached.sourceTokens) * 100) : 0}%` 
+      });
+      sendSSE(res, { 
+        type: 'done', 
+        sourceTokens: cached.sourceTokens, 
+        digestTokens: cached.digestTokens, 
+        exportText: restoredExportText,
+        fromCache: true,
+        fallbackUsed: false
+      });
+      return res.end();
+    }
+
+    // Mock mode
+    if (mock) {
+      setupSSE(res);
+      sendSSE(res, { type: 'system', message: `[仿真模式] 源文件 tokens: 15,000\n[仿真模式] 预处理后 tokens: 8,000` });
+      // Stream mock preprocess output
+      const chars = MOCK_PREPROCESS.split('');
+      for (const c of chars) {
+        sendSSE(res, { type: 'chunk', text: c });
+        await new Promise(r => setTimeout(r, 5));
+      }
+      sendSSE(res, { 
+        type: 'done', 
+        sourceTokens: 15000, 
+        digestTokens: 8000, 
+        exportText: MOCK_PREPROCESS,
+        fromCache: false,
+        fallbackUsed: false
+      });
+      return res.end();
+    }
+
+    // Read raw library files
+    const { files, sourceTokens } = await readRawLibraryFiles(validDir, excludeNames || []);
+    
+    if (files.length === 0) {
+      return res.status(400).json({ error: '素材库中没有可处理的文件' });
+    }
+
+    // Sanitize PII in library files before sending to AI
+    if (piiEntries.length > 0) {
+      sanitizeLibrary(files, piiEntries);
+    }
+
+    // Sanitize PII in instructions before sending to AI
+    let sanitizedInstructions = instructions;
+    if (piiEntries.length > 0 && instructions) {
+      const sanitized = { instructions };
+      sanitizeRequestBody(sanitized, ['instructions'], piiEntries);
+      sanitizedInstructions = sanitized.instructions;
+    }
+
+    setupSSE(res);
+    sendSSE(res, { type: 'system', message: `读取到 ${files.length} 个文件，源文件 tokens: ${sourceTokens.toLocaleString()}` });
+
+    // Build prompt (with sanitized instructions)
+    const { system, user } = getLibraryPreprocessPrompt(files, sanitizedInstructions);
+    const caller = getModelCaller(model);
+
+    // Build messages array for multi-turn conversation
+    let chatMessages = null;
+    if (messages && messages.length > 0) {
+      chatMessages = messages;
+      // Sanitize PII in chat messages
+      if (piiEntries.length > 0) {
+        sanitizeMessages(chatMessages, piiEntries);
+      }
+    }
+
+    let rawText = ''; // Raw AI output (with placeholders if PII enabled)
+    let restoredText = ''; // Restored text (with real PII)
+    
+    // Use stream restorer to restore PII in AI output
+    const restorer = piiEntries.length > 0 
+      ? createStreamRestorer(piiEntries, text => { 
+          restoredText += text;
+          sendSSE(res, { type: 'chunk', text }); 
+        }) 
+      : null;
+    const onChunk = restorer 
+      ? chunk => { rawText += chunk; restorer.push(chunk); }
+      : chunk => { restoredText += chunk; sendSSE(res, { type: 'chunk', text: chunk }); };
+
+    try {
+      console.log(`[AI Preprocess] Calling AI model: ${model}, sourceTokens: ${sourceTokens}`);
+      const result = await caller(
+        chatMessages ? null : user, 
+        onChunk, 
+        { 
+          system, 
+          messages: chatMessages, 
+          maxTokens: 16384 
+        }
+      );
+      console.log(`[AI Preprocess] AI call succeeded, output length: ${restoredText.length}`);
+      
+      // End the restorer to flush any remaining content
+      if (restorer) restorer.end();
+
+      // Calculate digest tokens from restored text
+      const digestTokens = restoredText.length; // Simplified estimation
+
+      // Extract export text from delimited output
+      let exportText = restoredText;
+      const startMarker = '===== 预处理文本开始 =====';
+      const endMarker = '===== 预处理文本结束 =====';
+      const startIdx = restoredText.indexOf(startMarker);
+      const endIdx = restoredText.indexOf(endMarker);
+      if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+        exportText = restoredText.slice(startIdx + startMarker.length, endIdx).trim();
+      }
+
+      // Save to AI cache (with PII restored, as cache is for user consumption)
+      await saveAiDigestCache(validDir, exportText, sourceTokens, digestTokens, instructions, model, piiEnabled);
+
+      sendSSE(res, { 
+        type: 'done', 
+        sourceTokens, 
+        digestTokens, 
+        exportText,
+        fromCache: false,
+        fallbackUsed: false,
+        usage: result.usage,
+        model
+      });
+
+    } catch (aiErr) {
+      // AI failed, fallback to local preprocessing
+      console.error(`[AI Preprocess] AI call failed:`, aiErr.message);
+      
+      // Provide more helpful error message
+      let errorMessage = aiErr.message;
+      if (sourceTokens > 1000000) {
+        errorMessage += ` (素材库 ${sourceTokens.toLocaleString()} tokens 可能超出模型限制，建议使用 Gemini 2.5 Pro 或分批处理)`;
+      } else if (sourceTokens > 500000) {
+        errorMessage += ` (素材库 ${sourceTokens.toLocaleString()} tokens 较大，建议使用 Gemini 2.5 Flash/Pro)`;
+      }
+      
+      sendSSE(res, { type: 'system', message: `⚠ AI预处理失败，回退到本地预处理: ${errorMessage}` });
+      
+      const { digest, sourceTokens: localSourceTokens, digestTokens: localDigestTokens } = await getLibraryDigest(validDir, excludeNames || []);
+      
+      // Build export text from local digest
+      let localExportText = `════════════════════════════════════════════════════════════════\n简历素材预处理纯文本文件（本地预处理）\nGenerated: ${new Date().toISOString()}\nSource files: ${digest.length} 份\nSource tokens: ~${localSourceTokens}\nOutput tokens: ~${localDigestTokens}\n════════════════════════════════════════════════════════════════\n\n`;
+      
+      for (const item of digest) {
+        localExportText += `--- ${item.name} ---\n${item.content}\n\n`;
+      }
+
+      sendSSE(res, { 
+        type: 'done', 
+        sourceTokens: localSourceTokens, 
+        digestTokens: localDigestTokens, 
+        exportText: localExportText,
+        fromCache: false,
+        fallbackUsed: true
+      });
+    }
+
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(err.message.includes('拒绝') ? 403 : 500).json({ error: err.message });
+    } else {
+      sendSSE(res, { type: 'error', message: err.message });
+    }
+  }
+  res.end();
 });
 
 export default router;

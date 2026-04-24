@@ -37,7 +37,7 @@ function calculateEstimatedTokens(text) {
 
 const CACHE_DIR = '.resume-tailor-cache';
 const CACHE_FILE = 'digest.json';
-const CACHE_SCHEMA_VERSION = 'digest-v6';
+const CACHE_SCHEMA_VERSION = 'digest-v7';
 const POSITIVE_FILE_NAME_PATTERNS = [
   /\bresume\b/i,
   /\bcv\b/i,
@@ -653,4 +653,138 @@ async function saveCache(cachePath, data) {
   } catch {
     // Cache write failure is non-fatal
   }
+}
+
+// ============================================================================
+// AI Preprocessing Cache Functions
+// ============================================================================
+
+/**
+ * Build cache key for AI preprocessing (includes prompt, model, and piiEnabled).
+ * AI cache invalidates when: files change OR prompt changes OR model changes OR piiEnabled changes.
+ */
+function buildAiCacheKey(files, preprocessInstructions, preprocessorModel, piiEnabled) {
+  const instructionsHash = crypto.createHash('md5').update(String(preprocessInstructions || '').trim()).digest('hex').slice(0, 8);
+  const data = [
+    CACHE_SCHEMA_VERSION,
+    'ai-mode',
+    preprocessorModel || 'default',
+    instructionsHash,
+    `pii:${piiEnabled ? '1' : '0'}`,
+    ...files.map(f => `${f.name}:${new Date(f.modified).getTime()}`)
+  ].join('|');
+  return crypto.createHash('md5').update(data).digest('hex');
+}
+
+/**
+ * Get AI preprocessed library from cache.
+ * Returns null if cache doesn't exist or doesn't match (mode !== 'ai' or piiEnabled mismatch).
+ * 
+ * @param {string} dirPath - Library directory path
+ * @param {string} preprocessInstructions - User's preprocessing instructions
+ * @param {string} preprocessorModel - Model ID used for preprocessing
+ * @param {boolean} piiEnabled - Whether PII sanitization was enabled during preprocessing
+ * @returns {Promise<{exportText: string, sourceTokens: number, digestTokens: number, fromCache: true} | null>}
+ */
+export async function getAiPreprocessedLibrary(dirPath, preprocessInstructions, preprocessorModel, piiEnabled) {
+  const files = await listResumeFiles(dirPath);
+  const targetFiles = files.filter(
+    f => f.readable && !isExportedDigestArtifactFileName(f.name)
+  );
+
+  if (targetFiles.length === 0) return null;
+
+  const cacheKey = buildAiCacheKey(targetFiles, preprocessInstructions, preprocessorModel, piiEnabled);
+  const cachePath = path.join(dirPath, CACHE_DIR, CACHE_FILE);
+  const cached = await loadCache(cachePath);
+
+  // Validate cache: must be AI mode with matching key and piiEnabled
+  if (!cached || cached.mode !== 'ai' || cached.key !== cacheKey) {
+    return null;
+  }
+
+  // Additional piiEnabled validation for backward compatibility with old caches
+  if (cached.piiEnabled !== undefined && cached.piiEnabled !== piiEnabled) {
+    return null;
+  }
+
+  return {
+    exportText: cached.exportText || '',
+    sourceTokens: cached.sourceTokens || 0,
+    digestTokens: cached.digestTokens || 0,
+    fromCache: true
+  };
+}
+
+/**
+ * Save AI preprocessing result to cache.
+ * 
+ * @param {string} dirPath - Library directory path
+ * @param {string} exportText - The preprocessed text output
+ * @param {number} sourceTokens - Token count of source files
+ * @param {number} digestTokens - Token count of preprocessed output
+ * @param {string} preprocessInstructions - User's preprocessing instructions
+ * @param {string} preprocessorModel - Model ID used for preprocessing
+ * @param {boolean} piiEnabled - Whether PII sanitization was enabled during preprocessing
+ */
+export async function saveAiDigestCache(dirPath, exportText, sourceTokens, digestTokens, preprocessInstructions, preprocessorModel, piiEnabled) {
+  const files = await listResumeFiles(dirPath);
+  const targetFiles = files.filter(
+    f => f.readable && !isExportedDigestArtifactFileName(f.name)
+  );
+
+  const cacheKey = buildAiCacheKey(targetFiles, preprocessInstructions, preprocessorModel, piiEnabled);
+  const cachePath = path.join(dirPath, CACHE_DIR, CACHE_FILE);
+
+  const cacheData = {
+    mode: 'ai',
+    key: cacheKey,
+    digest: [{ name: '__ai_preprocessed__', content: exportText }],
+    exportText,
+    sourceTokens,
+    digestTokens,
+    preprocessInstructions: String(preprocessInstructions || '').trim().slice(0, 200),
+    preprocessorModel: preprocessorModel || 'default',
+    piiEnabled: !!piiEnabled,
+    updatedAt: new Date().toISOString()
+  };
+
+  await saveCache(cachePath, cacheData);
+}
+
+/**
+ * Read raw library files for AI preprocessing.
+ * Unlike getLibraryDigest, this does NOT apply local dedup - returns raw content.
+ * Still excludes prompt/template files and exported digest artifacts.
+ * 
+ * @param {string} dirPath - Library directory path
+ * @param {string[]} excludeNames - File names to exclude
+ * @returns {Promise<{files: Array<{name: string, content: string}>, sourceTokens: number}>}
+ */
+export async function readRawLibraryFiles(dirPath, excludeNames = []) {
+  const files = await listResumeFiles(dirPath);
+  const excludeSet = new Set(excludeNames);
+  const targetFiles = files.filter(
+    f => f.readable && !excludeSet.has(f.name) && !isExportedDigestArtifactFileName(f.name)
+  );
+
+  const result = [];
+  let sourceTokens = 0;
+
+  for (const f of targetFiles) {
+    // Skip negative pattern files (prompts, reviews, etc.)
+    if (NEGATIVE_FILE_NAME_PATTERNS.some(pattern => pattern.test(f.name))) continue;
+    
+    try {
+      const content = await readFileContent(path.join(dirPath, f.name));
+      if (content && content.trim()) {
+        result.push({ name: f.name, content });
+        sourceTokens += calculateEstimatedTokens(content);
+      }
+    } catch {
+      // Skip files that fail to read
+    }
+  }
+
+  return { files: result, sourceTokens };
 }

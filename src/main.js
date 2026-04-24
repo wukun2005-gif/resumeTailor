@@ -58,8 +58,14 @@ const els = {
   settingsBtn: $('settingsBtn'), settingsModal: $('settingsModal'), settingsClose: $('settingsClose'), settingsSave: $('settingsSave'), settingsStatus: $('settingsStatus'),
   // Agent assignment dropdowns
   cfgAgentOrchestrator: $('cfgAgentOrchestrator'), cfgAgentGenerator: $('cfgAgentGenerator'),
-  cfgAgentReviewers: $('cfgAgentReviewers'), cfgAgentHtml: $('cfgAgentHtml'),
+  cfgAgentReviewers: $('cfgAgentReviewers'), cfgAgentHtml: $('cfgAgentHtml'), cfgAgentPreprocessor: $('cfgAgentPreprocessor'),
   jdInput: $('jdInput'), libraryPath: $('libraryPath'), browseLibraryBtn: $('browseLibraryBtn'), loadLibraryBtn: $('loadLibraryBtn'), exportDigestBtn: $('exportDigestBtn'), exportDigestStatus: $('exportDigestStatus'), baseResumeSelect: $('baseResumeSelect'),
+  // AI Preprocessing
+  useAiPreprocess: $('useAiPreprocess'),
+  preprocessInstructionsSection: $('preprocessInstructionsSection'), preprocessInstructions: $('preprocessInstructions'),
+  preprocessLoadFile: $('preprocessLoadFile'), preprocessSaveFile: $('preprocessSaveFile'), preprocessFileStatus: $('preprocessFileStatus'),
+  preprocessChatSection: $('preprocessChatSection'), preprocessChatHistory: $('preprocessChatHistory'),
+  preprocessChatInput: $('preprocessChatInput'), preprocessChatSendBtn: $('preprocessChatSendBtn'),
   jdImageUpload: $('jdImageUpload'), jdImageUseAi: $('jdImageUseAi'), jdImageStatus: $('jdImageStatus'), jdImageAiRetryBtn: $('jdImageAiRetryBtn'), jdImageQualityHint: $('jdImageQualityHint'),
   manualResumeRow: $('manualResumeRow'), manualResumeInput: $('manualResumeInput'),
   genInstructions: $('genInstructions'), reviewInstructions: $('reviewInstructions'), htmlInstructions: $('htmlInstructions'), generateCoverLetter: $('generateCoverLetter'),
@@ -102,6 +108,7 @@ let uploadedFileData = null; // { mimeType, data } for PDF/image upload
 let baseResumeCache = new Map(); // key=filename, value={content, modified}
 let jdImageLastBatch = null;
 let jdOcrWorkerPromise = null;
+let preprocessChatMessages = []; // Preprocessor chat context
 
 /* ── Session Token & Cost Tracking ── */
 let sessionUsage = { totalInput: 0, totalOutput: 0, totalCost: 0 };
@@ -405,15 +412,21 @@ function applyResolvedAgentSelections(overrides = {}) {
     state.get('reviewerModels', ['google-studio-google']),
     'google-studio-google',
   );
+  const preprocessorModel = resolveSingleConnectionId(
+    overrides.preprocessorValue ?? els.cfgAgentPreprocessor?.value,
+    state.get('preprocessorModel', 'google-studio-google'),
+    'google-studio-google',
+  );
 
   if (els.cfgAgentOrchestrator) els.cfgAgentOrchestrator.value = orchestratorModel;
   els.cfgAgentGenerator.value = generatorModel;
   els.cfgAgentHtml.value = htmlModel;
+  if (els.cfgAgentPreprocessor) els.cfgAgentPreprocessor.value = preprocessorModel;
   for (const cb of els.cfgAgentReviewers.querySelectorAll('input[type="checkbox"]')) {
     cb.checked = reviewerModels.includes(cb.value);
   }
 
-  return { orchestratorModel, generatorModel, htmlModel, reviewerModels };
+  return { orchestratorModel, generatorModel, htmlModel, reviewerModels, preprocessorModel };
 }
 
 function getBestOrchestratorModelId() {
@@ -438,6 +451,7 @@ function populateAgentDropdowns() {
     generatorValue: els.cfgAgentGenerator.value,
     htmlValue: els.cfgAgentHtml.value,
     reviewerValues: getSelectedReviewers(),
+    preprocessorValue: els.cfgAgentPreprocessor?.value,
   };
   const bestOrchestratorId = getBestOrchestratorModelId();
   
@@ -453,6 +467,7 @@ function populateAgentDropdowns() {
   if (els.cfgAgentOrchestrator) els.cfgAgentOrchestrator.innerHTML = emptyOption + orchestratorOptions;
   if (els.cfgAgentGenerator) els.cfgAgentGenerator.innerHTML = emptyOption + options;
   if (els.cfgAgentHtml) els.cfgAgentHtml.innerHTML = emptyOption + options;
+  if (els.cfgAgentPreprocessor) els.cfgAgentPreprocessor.innerHTML = emptyOption + options;
 
   els.cfgAgentReviewers.innerHTML = configured.map(c =>
     `<label class="checkbox-label"><input type="checkbox" value="${c.id}"> ${c.label}</label>`
@@ -482,9 +497,17 @@ function getReviewCoordinatorModelId() {
   return reviewers[0] || getGeneratorModelId();
 }
 
+function getPreprocessorModelId() {
+  return resolveSingleConnectionId(
+    els.cfgAgentPreprocessor?.value,
+    state.get('preprocessorModel', 'google-studio-google'),
+    'google-studio-google'
+  );
+}
+
 function requireConfiguredConnection(connectionId, roleLabel) {
   if (connectionId || els.mockMode.checked) return connectionId;
-  throw new Error(`${roleLabel} 模型连接未配置，请先在“设置”中填写 API Key 并保存`);
+  throw new Error(`${roleLabel} 模型连接未配置，请先在"设置"中填写 API Key 并保存`);
 }
 
 /* ── Token & Cost Utilities ── */
@@ -600,6 +623,7 @@ async function init() {
   populateAgentDropdowns();
   restoreAgentAssignments();
   updateGenerateBtn();
+  updateAiPreprocessUI(); // 初始化 AI 预处理 UI 状态
   await autoInitAPI();
   if (els.libraryPath.value.trim()) {
     await loadLibrary(true);
@@ -692,6 +716,10 @@ async function restoreState() {
   els.htmlInstructions.value = state.get('htmlInstructions');
   els.mockMode.checked = state.get('mockMode', false);
   if (els.jdImageUseAi) els.jdImageUseAi.checked = state.get('jdImageUseAi', true);
+  
+  // Restore AI preprocessing settings
+  if (els.useAiPreprocess) els.useAiPreprocess.checked = state.get('preprocessUseAi', false);
+  if (els.preprocessInstructions) els.preprocessInstructions.value = state.get('preprocessInstructions', '');
 
   // Restore PII config
   els.cfgPiiEnabled.checked = state.get('piiEnabled', false);
@@ -803,9 +831,123 @@ function bindEvents() {
     if (document.visibilityState === 'hidden') persistDraftState(true);
   });
   // Auto-resize chat textareas
-  for (const ta of [els.genChatInput, els.chatInput, els.htmlChatInput]) {
+  for (const ta of [els.genChatInput, els.chatInput, els.htmlChatInput, els.preprocessChatInput]) {
     if (ta) ta.addEventListener('input', () => autoResize(ta));
   }
+  // AI 预处理开关事件
+  if (els.useAiPreprocess) {
+    els.useAiPreprocess.addEventListener('change', () => {
+      state.set('preprocessUseAi', els.useAiPreprocess.checked);
+      updateAiPreprocessUI();
+    });
+  }
+  // 预处理对话事件
+  if (els.preprocessChatSendBtn) {
+    els.preprocessChatSendBtn.addEventListener('click', doPreprocessChat);
+  }
+  if (els.preprocessChatInput) {
+    els.preprocessChatInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        doPreprocessChat();
+      }
+    });
+  }
+  // 预处理指令区文件操作
+  if (els.preprocessLoadFile) {
+    els.preprocessLoadFile.addEventListener('change', e => handleLoadFile(e, 'preprocess'));
+  }
+  if (els.preprocessSaveFile) {
+    els.preprocessSaveFile.addEventListener('click', () => handleSaveFile('preprocess'));
+  }
+  // 预处理指令变更事件
+  if (els.preprocessInstructions) {
+    els.preprocessInstructions.addEventListener('change', () => {
+      state.set('preprocessInstructions', els.preprocessInstructions.value);
+    });
+  }
+}
+
+/* ── AI 预处理 UI 控制 ── */
+async function ensureDefaultPreprocessInstructions() {
+  // Only load default if user hasn't set custom instructions
+  if (els.preprocessInstructions && !els.preprocessInstructions.value.trim()) {
+    try {
+      const defaultPrompt = await api.getDefaultPreprocessPrompt();
+      if (defaultPrompt) {
+        els.preprocessInstructions.value = defaultPrompt;
+        state.set('preprocessInstructions', defaultPrompt);
+      }
+    } catch (e) {
+      console.warn('Failed to load default preprocess prompt:', e.message);
+    }
+  }
+}
+
+function updateAiPreprocessUI() {
+  const useAi = els.useAiPreprocess?.checked;
+  if (els.preprocessInstructionsSection) {
+    els.preprocessInstructionsSection.style.display = useAi ? '' : 'none';
+  }
+  if (els.preprocessChatSection) {
+    els.preprocessChatSection.style.display = useAi ? '' : 'none';
+  }
+  // Load default prompt when AI preprocessing is enabled and instructions are empty
+  if (useAi) {
+    ensureDefaultPreprocessInstructions();
+  }
+}
+
+/* ── Preprocessor Chat ── */
+async function doPreprocessChat() {
+  const msg = els.preprocessChatInput.value.trim();
+  if (!msg || isStreaming) return;
+
+  // Show PII status hint on first message
+  if (preprocessChatMessages.length === 0 && els.cfgPiiEnabled.checked) {
+    appendPreprocessChatBubble('system', '当前已应用 PII 脱敏设置（仅对发往 AI 的内容生效，本地导出仍为真实内容）');
+  }
+
+  preprocessChatMessages.push({ role: 'user', content: msg });
+  appendPreprocessChatBubble('user', msg);
+  els.preprocessChatInput.value = '';
+
+  isStreaming = true;
+  els.preprocessChatSendBtn.disabled = true;
+  const aiDiv = appendPreprocessChatBubble('ai', '思考中...');
+  aiDiv.classList.add('loading');
+
+  try {
+    const model = requireConfiguredConnection(getPreprocessorModelId(), 'Preprocessor');
+    const dir = els.libraryPath.value.trim();
+    const instructions = els.preprocessInstructions.value.trim();
+    
+    const result = await api.preprocessLibrary(dir, model, instructions, preprocessChatMessages, [], els.mockMode.checked, (chunk, full) => {
+      aiDiv.classList.remove('loading');
+      aiDiv.textContent = full;
+      els.preprocessChatHistory.scrollTop = els.preprocessChatHistory.scrollHeight;
+    });
+    
+    preprocessChatMessages.push({ role: 'assistant', content: result.text || result });
+
+    // Display token usage
+    if (result.sourceTokens !== undefined && result.digestTokens !== undefined) {
+      const systemDiv = appendPreprocessChatBubble('system', `源文件: ${result.sourceTokens.toLocaleString()} tokens → 预处理后: ${result.digestTokens.toLocaleString()} tokens${result.fromCache ? ' (缓存命中)' : ''}${result.fallbackUsed ? ' (已回退本地预处理)' : ''}`);
+    }
+  } catch (e) {
+    aiDiv.textContent = '错误: ' + e.message;
+  }
+  isStreaming = false;
+  els.preprocessChatSendBtn.disabled = false;
+}
+
+function appendPreprocessChatBubble(role, text) {
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}`;
+  div.textContent = text;
+  els.preprocessChatHistory.appendChild(div);
+  els.preprocessChatHistory.scrollTop = els.preprocessChatHistory.scrollHeight;
+  return div;
 }
 
 function autoResize(textarea) {
@@ -865,6 +1007,7 @@ async function saveSettings() {
   state.set('generatorModel', assignments.generatorModel);
   state.set('reviewerModels', assignments.reviewerModels);
   state.set('htmlModel', assignments.htmlModel);
+  state.set('preprocessorModel', assignments.preprocessorModel);
 
   // Save PII config (encrypted)
   state.set('piiEnabled', els.cfgPiiEnabled.checked);
@@ -1118,6 +1261,14 @@ async function calculateEstimatedTokens(text) {
 async function exportDigest() {
   const dir = els.libraryPath.value.trim();
   if (!dir) { alert('请先输入素材库路径并加载'); return; }
+  
+  // AI 预处理分支
+  if (els.useAiPreprocess?.checked) {
+    await exportDigestWithAi();
+    return;
+  }
+  
+  // 本地预处理分支
   els.exportDigestBtn.disabled = true;
   els.exportDigestStatus.textContent = '正在导出...';
   els.exportDigestStatus.className = 'status-text';
@@ -1163,6 +1314,109 @@ async function exportDigest() {
   } catch (e) {
     els.exportDigestStatus.textContent = '导出失败: ' + e.message;
     els.exportDigestStatus.className = 'status-text error';
+  } finally {
+    els.exportDigestBtn.disabled = false;
+  }
+}
+
+/**
+ * AI 预处理导出分支
+ * 通过 AI 预处理素材库，然后导出预处理文本
+ */
+async function exportDigestWithAi() {
+  const dir = els.libraryPath.value.trim();
+  const model = getPreprocessorModelId();
+
+  if (!model && !els.mockMode.checked) {
+    alert('请先在设置中配置 Preprocessor 模型');
+    return;
+  }
+
+  els.exportDigestBtn.disabled = true;
+  els.exportDigestStatus.textContent = '正在 AI 预处理...';
+  els.exportDigestStatus.className = 'status-text';
+
+  // 清空预处理对话历史
+  preprocessChatMessages = [];
+  els.preprocessChatHistory.innerHTML = '';
+
+  try {
+    // 确保素材库路径在 allowedPaths 中
+    const allowedPaths = ['/Users/wukun/Documents/tmp/resumeTailor/vscCCOpus'];
+    if (dir) allowedPaths.push(dir);
+    const connections = buildModelConnections();
+    await api.initAPI({ modelConnections: connections, allowedPaths, piiConfig: buildPiiConfig() });
+
+    const instructions = els.preprocessInstructions.value.trim();
+
+    // 添加系统消息显示开始处理
+    appendPreprocessChatBubble('system', `开始 AI 预处理素材库...\n模型: ${model || 'mock'}\n路径: ${dir}`);
+    
+    let fullText = '';
+    const result = await api.preprocessLibrary(
+      dir, 
+      model, 
+      instructions, 
+      [], // 初始无消息
+      [], 
+      els.mockMode.checked,
+      (chunk, text) => {
+        fullText = text;
+        // 更新或添加 AI 气泡
+        const lastBubble = els.preprocessChatHistory.lastElementChild;
+        if (lastBubble && lastBubble.classList.contains('ai')) {
+          lastBubble.textContent = text;
+        } else {
+          appendPreprocessChatBubble('ai', text);
+        }
+      }
+    );
+    
+    // 显示 token 统计
+    const tokenInfo = `源文件: ${result.sourceTokens?.toLocaleString() || 0} tokens → 预处理后: ${result.digestTokens?.toLocaleString() || 0} tokens${result.fromCache ? ' (缓存命中)' : ''}${result.fallbackUsed ? ' (已回退本地预处理)' : ''}`;
+    appendPreprocessChatBubble('system', tokenInfo);
+    
+    // 获取预处理结果文本
+    const exportText = result.exportText || fullText;
+    
+    if (!exportText) {
+      els.exportDigestStatus.textContent = 'AI 预处理未返回有效内容';
+      els.exportDigestStatus.className = 'status-text error';
+      return;
+    }
+    
+    // 构建导出文本
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    
+    const text = `========== 素材库预处理文本 (AI) ==========
+导出时间：${dateStr} ${timeStr}
+素材库路径：${dir}
+处理模式：AI 预处理${result.fallbackUsed ? ' (已回退本地)' : ''}
+源文件 Token：${result.sourceTokens?.toLocaleString() || 0}
+预处理后 Token：${result.digestTokens?.toLocaleString() || 0}
+
+${exportText}`;
+    
+    // 触发浏览器下载
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `素材库预处理文本-${dateStr}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    els.exportDigestStatus.textContent = `导出完成（${result.fromCache ? '缓存命中' : 'AI 预处理'}，源文件: ${result.sourceTokens?.toLocaleString() || 0} tokens，预处理后: ${result.digestTokens?.toLocaleString() || 0} tokens）`;
+    els.exportDigestStatus.className = 'status-text success';
+    
+  } catch (e) {
+    els.exportDigestStatus.textContent = 'AI 预处理导出失败: ' + e.message;
+    els.exportDigestStatus.className = 'status-text error';
+    appendPreprocessChatBubble('system', `错误: ${e.message}`);
   } finally {
     els.exportDigestBtn.disabled = false;
   }
@@ -2376,6 +2630,11 @@ async function handleLoadFile(e, type) {
       console.log('handleLoadFile: 填充HTML格式指令区');
       els.htmlInstructions.value = content;
       persistInputs();
+    } else if (type === 'preprocess') {
+      console.log('handleLoadFile: 填充预处理指令区');
+      els.preprocessInstructions.value = content;
+      state.set('preprocessInstructions', content);
+      console.log('handleLoadFile: preprocessInstructions.value 已更新');
     }
     
     statusEl.textContent = `已加载: ${file.name} (${file.size.toLocaleString()} 字节)`;
@@ -2453,7 +2712,8 @@ async function readFileContent(file) {
 async function handleSaveFile(type) {
   const content = type === 'gen' ? els.genInstructions.value.trim() :
                   type === 'review' ? els.reviewInstructions.value.trim() :
-                  els.htmlInstructions.value.trim();
+                  type === 'htmlFormat' ? els.htmlInstructions.value.trim() :
+                  type === 'preprocess' ? els.preprocessInstructions.value.trim() : '';
   
   if (!content) {
     alert('请先输入指令内容');
@@ -2462,7 +2722,8 @@ async function handleSaveFile(type) {
   
   const statusEl = type === 'gen' ? els.genFileStatus :
                   type === 'review' ? els.reviewFileStatus :
-                  els.htmlFormatFileStatus;
+                  type === 'htmlFormat' ? els.htmlFormatFileStatus :
+                  els.preprocessFileStatus;
   
   const isStreamingOriginal = isStreaming;
   isStreaming = true;
