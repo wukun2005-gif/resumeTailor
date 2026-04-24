@@ -119,3 +119,34 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
   .split-panels { flex-direction: column; }
   .form-row-inline { flex-direction: column; }
 }
+
+/* ── Gemini Fallback Drag & Drop ── */
+.gemini-model-row {
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.gemini-model-row:active {
+  cursor: grabbing;
+}
+
+.gemini-model-row.drag-over {
+  background: #e3f2fd !important;
+  border-color: #1976d2 !important;
+  transform: scale(1.01);
+}
+
+.fallback-model-item {
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.fallback-model-item:active {
+  cursor: grabbing;
+}
+
+.fallback-model-item.drag-over {
+  background: #e3f2fd !important;
+  border-color: #1976d2 !important;
+  transform: scale(1.01);
+}

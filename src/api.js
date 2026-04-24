@@ -201,3 +201,27 @@ export async function preprocessLibrary(dir, model, instructions, messages, excl
   }
   return result;
 }
+
+/**
+ * Get current Gemini fallback model list
+ */
+export async function getGeminiFallbackModels() {
+  const res = await fetch('/api/gemini/fallback-models');
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '获取 Gemini fallback 模型列表失败');
+  return data.models;
+}
+
+/**
+ * Save Gemini fallback model list
+ */
+export async function setGeminiFallbackModels(models) {
+  const res = await fetch('/api/gemini/fallback-models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ models }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '保存 Gemini fallback 模型列表失败');
+  return data;
+}

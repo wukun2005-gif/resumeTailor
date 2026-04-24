@@ -547,7 +547,20 @@ function updateSessionTotal() {
   }
 }
 
-/* ── Gemini Model Discovery ── */
+/* ── Gemini Model Discovery & Fallback Management ── */
+let geminiModelsData = [];
+const DEFAULT_FALLBACK_MODELS_HARDCODE = [
+  'gemini-3.1-flash-lite-preview',
+  'gemini-2.5-flash-lite',
+  'gemini-2.0-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-exp',
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-8b',
+  'gemini-1.5-pro'
+];
+
 async function fetchGeminiModels() {
   const statusEl = document.getElementById('geminiModelStatus');
   const queryBtn = document.getElementById('geminiQueryModelsBtn');
@@ -570,37 +583,31 @@ async function fetchGeminiModels() {
   if (queryBtn) queryBtn.disabled = true;
   try {
     const response = await api.listModels('google-studio-google', currentKey);
-    const { models } = response;
+    geminiModelsData = response.models;
 
-    const tbody = document.getElementById('geminiModelListBody');
-    if (!models.length) {
-      tbody.innerHTML = `
-        <tr>
-          <td colspan="4" style="padding:8px;color:#666;">未找到适合简历/求职信文本生成的模型</td>
-        </tr>
-      `;
-    } else {
-      tbody.innerHTML = models.map(m => {
-        const rpmStr = `${m.rateLimits.rpm}/${m.rateLimits.rpm}`;
-        const rpdStr = `${m.rateLimits.rpd}/${m.rateLimits.rpd}`;
-        const tpmStr = m.rateLimits.tpm > 0 ? (m.rateLimits.tpm / 1000000).toFixed(1) + 'M' : '-';
-        return `
-          <tr style="border-bottom:1px solid #eee;">
-            <td style="padding:4px;">${m.recommendation}</td>
-            <td style="padding:4px;"><code style="font-size:0.8rem;">${m.id}</code></td>
-            <td style="padding:4px;font-size:0.75rem;">RPM ${rpmStr} / RPD ${rpdStr} / TPM ${tpmStr}</td>
-            <td style="padding:4px;">
-              <button class="btn-secondary btn-sm" data-select-model="${m.id}" style="padding:2px 8px;font-size:0.75rem;">选择</button>
-            </td>
-          </tr>
-        `;
-      }).join('');
+    // Load saved fallback order first
+    let savedFallbackOrder = [];
+    try {
+      savedFallbackOrder = await api.getGeminiFallbackModels();
+    } catch (e) {
+      console.log('No saved fallback order found, using default');
     }
 
-    tbody.onclick = (e) => {
-      const btn = e.target.closest('[data-select-model]');
-      if (btn) selectGeminiModel(btn.dataset.selectModel);
-    };
+    // Reorder models according to saved fallback order
+    if (savedFallbackOrder.length > 0) {
+      const ordered = [];
+      const unordered = [];
+      savedFallbackOrder.forEach(savedId => {
+        const found = geminiModelsData.find(m => m.id === savedId);
+        if (found) ordered.push(found);
+      });
+      geminiModelsData.forEach(m => {
+        if (!ordered.find(o => o.id === m.id)) unordered.push(m);
+      });
+      geminiModelsData = [...ordered, ...unordered];
+    }
+
+    renderGeminiModelTable();
 
     const modelList = document.getElementById('geminiModelList');
     modelList.style.display = '';
@@ -609,6 +616,7 @@ async function fetchGeminiModels() {
       statusEl.className = 'status-text success';
     }
   } catch (e) {
+    console.error('Error fetching Gemini models:', e);
     if (statusEl) {
       statusEl.textContent = '查询失败';
       statusEl.className = 'status-text error';
@@ -619,13 +627,180 @@ async function fetchGeminiModels() {
   }
 }
 
-function selectGeminiModel(modelId) {
-  const modelInput = getConnInput('google-studio-google', 'model');
-  if (modelInput) {
-    modelInput.value = modelId;
-    populateAgentDropdowns();
+function renderGeminiModelTable() {
+  const tbody = document.getElementById('geminiModelListBody');
+  if (!tbody) return;
+  
+  const currentSelectedModel = getConnInput('google-studio-google', 'model')?.value || '';
+  
+  if (!geminiModelsData.length) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" style="padding:8px;color:#666;">未找到适合简历/求职信文本生成的模型</td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = geminiModelsData.map((m, index) => {
+    const rpmStr = `${m.rateLimits.rpm}/${m.rateLimits.rpm}`;
+    const rpdStr = `${m.rateLimits.rpd}/${m.rateLimits.rpd}`;
+    const tpmStr = m.rateLimits.tpm > 0 ? (m.rateLimits.tpm / 1000000).toFixed(1) + 'M' : '-';
+    const isSelected = m.id === currentSelectedModel;
+    return `
+      <tr class="gemini-model-row" 
+          style="border-bottom:1px solid #eee;cursor:grab;background:${isSelected ? '#e3f2fd' : '#fff'};"
+          draggable="true"
+          data-index="${index}">
+        <td style="padding:4px;text-align:center;width:50px;font-weight:bold;color:#666;">${index + 1}</td>
+        <td style="padding:4px;">${m.recommendation}</td>
+        <td style="padding:4px;">
+          <code style="font-size:0.8rem;">${m.id}</code>
+          ${isSelected ? '<span style="font-size:0.7rem;color:#1976d2;background:#e3f2fd;padding:1px 4px;border-radius:3px;margin-left:4px;">当前</span>' : ''}
+        </td>
+        <td style="padding:4px;font-size:0.75rem;">RPM ${rpmStr} / RPD ${rpdStr} / TPM ${tpmStr}</td>
+        <td style="padding:4px;">
+          <button class="btn-${isSelected ? 'primary' : 'secondary'} btn-sm" data-select-model="${m.id}" style="padding:2px 8px;font-size:0.75rem;">选择</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // Add click handlers to model select buttons
+  tbody.querySelectorAll('[data-select-model]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const modelId = btn.getAttribute('data-select-model');
+      const modelInput = getConnInput('google-studio-google', 'model');
+      if (modelInput) {
+        modelInput.value = modelId;
+        populateAgentDropdowns();
+      }
+      renderGeminiModelTable();
+    });
+  });
+
+  // Add drag and drop handlers
+  const rows = tbody.querySelectorAll('.gemini-model-row');
+  let draggedRow = null;
+
+  rows.forEach(row => {
+    row.addEventListener('dragstart', (e) => {
+      draggedRow = row;
+      row.style.opacity = '0.5';
+      row.style.transform = 'scale(1.01)';
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    row.addEventListener('dragend', () => {
+      row.style.opacity = '';
+      row.style.transform = '';
+      rows.forEach(r => {
+        r.classList.remove('drag-over');
+        const rowIndex = parseInt(r.dataset.index);
+        const rowModel = geminiModelsData[rowIndex]?.id;
+        const currentModel = getConnInput('google-studio-google', 'model')?.value;
+        r.style.backgroundColor = rowModel === currentModel ? '#e3f2fd' : '#fff';
+      });
+    });
+
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (row !== draggedRow) {
+        row.classList.add('drag-over');
+        row.style.backgroundColor = '#e3f2fd';
+      }
+    });
+
+    row.addEventListener('dragleave', () => {
+      row.classList.remove('drag-over');
+      const rowIndex = parseInt(row.dataset.index);
+      const rowModel = geminiModelsData[rowIndex]?.id;
+      const currentModel = getConnInput('google-studio-google', 'model')?.value;
+      row.style.backgroundColor = rowModel === currentModel ? '#e3f2fd' : '#fff';
+    });
+
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (row !== draggedRow) {
+        const fromIndex = parseInt(draggedRow.getAttribute('data-index'));
+        const toIndex = parseInt(row.getAttribute('data-index'));
+
+        const [movedItem] = geminiModelsData.splice(fromIndex, 1);
+        geminiModelsData.splice(toIndex, 0, movedItem);
+
+        renderGeminiModelTable();
+      }
+    });
+  });
+}
+
+async function handleGeminiFallbackSave() {
+  const saveBtn = document.getElementById('geminiFallbackSaveBtn');
+  const statusEl = document.getElementById('geminiFallbackStatus');
+  
+  if (!geminiModelsData.length) {
+    if (statusEl) {
+      statusEl.textContent = '请先查询可用模型';
+      statusEl.style.color = '#ff9800';
+    }
+    return;
+  }
+  
+  if (saveBtn) saveBtn.disabled = true;
+  if (statusEl) {
+    statusEl.textContent = '保存中...';
+    statusEl.style.color = '#666';
+  }
+  
+  try {
+    const fallbackModelIds = geminiModelsData.map(m => m.id);
+    const result = await api.setGeminiFallbackModels(fallbackModelIds);
+    if (statusEl) {
+      statusEl.textContent = result.message;
+      statusEl.style.color = '#28a745';
+    }
+  } catch (err) {
+    console.error('Error saving Gemini fallback models:', err);
+    if (statusEl) {
+      statusEl.textContent = `保存失败: ${err.message}`;
+      statusEl.style.color = '#dc3545';
+    }
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
   }
 }
+
+function handleGeminiFallbackReset() {
+  if (confirm('确定要恢复默认的 fallback 模型列表吗？')) {
+    // Reorder according to default
+    const defaultOrder = [...DEFAULT_FALLBACK_MODELS_HARDCODE];
+    const ordered = [];
+    const unordered = [];
+    
+    defaultOrder.forEach(savedId => {
+      const found = geminiModelsData.find(m => m.id === savedId);
+      if (found) ordered.push(found);
+    });
+    geminiModelsData.forEach(m => {
+      if (!ordered.find(o => o.id === m.id)) unordered.push(m);
+    });
+    geminiModelsData = [...ordered, ...unordered];
+    
+    renderGeminiModelTable();
+    const statusEl = document.getElementById('geminiFallbackStatus');
+    if (statusEl) {
+      statusEl.textContent = '已恢复默认，请点击保存';
+      statusEl.style.color = '#ff9800';
+    }
+  }
+}
+
+async function loadGeminiFallbackModels() {
+  // No-op for now, handled in fetchGeminiModels
+}
+
+
 
 /* ── Init ── */
 async function init() {
@@ -635,6 +810,7 @@ async function init() {
   restoreAgentAssignments();
   updateGenerateBtn();
   updateAiPreprocessUI(); // 初始化 AI 预处理 UI 状态
+  await loadGeminiFallbackModels(); // 加载 Gemini fallback 列表
   await autoInitAPI();
   if (els.libraryPath.value.trim()) {
     await loadLibrary(true);
@@ -815,6 +991,13 @@ function bindEvents() {
   els.mockMode.addEventListener('change', () => { state.set('mockMode', els.mockMode.checked); updateGenerateBtn(); });
   const geminiQueryBtn = document.getElementById('geminiQueryModelsBtn');
   if (geminiQueryBtn) geminiQueryBtn.addEventListener('click', fetchGeminiModels);
+  
+  // Gemini fallback list events
+  const geminiFallbackSaveBtn = document.getElementById('geminiFallbackSaveBtn');
+  if (geminiFallbackSaveBtn) geminiFallbackSaveBtn.addEventListener('click', handleGeminiFallbackSave);
+  
+  const geminiFallbackResetBtn = document.getElementById('geminiFallbackResetBtn');
+  if (geminiFallbackResetBtn) geminiFallbackResetBtn.addEventListener('click', handleGeminiFallbackReset);
   // Update agent dropdowns when connection keys change
   for (const def of MODEL_CONNECTIONS) {
     const keyInput = getConnInput(def.id, 'key');

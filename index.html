@@ -108,11 +108,20 @@
                 </tr>
               </tbody>
             </table>
-            <!-- Gemini Models List -->
-            <div id="geminiModelList" style="display:none; margin-top:12px;padding:8px;border:1px solid #ddd;border-radius:4px;max-height:300px;overflow-y:auto;">
+            <!-- Gemini Models & Fallback List -->
+            <div id="geminiModelList" style="display:none; margin-top:12px;padding:8px;border:1px solid #ddd;border-radius:4px;max-height:500px;overflow-y:auto;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <h4 style="margin:0;">Gemini 模型 & Fallback 排序</h4>
+                <div style="display:flex;gap:8px;">
+                  <button id="geminiFallbackResetBtn" class="btn-secondary btn-sm" type="button">恢复默认</button>
+                  <button id="geminiFallbackSaveBtn" class="btn-primary btn-sm" type="button">保存</button>
+                </div>
+              </div>
+              <p style="margin:0 0 8px 0;font-size:0.8rem;color:#666;">拖拽行来调整Fallback顺序；点击"选择"设为当前模型</p>
               <table class="model-list-table" style="width:100%;font-size:0.85rem;border-collapse:collapse;">
-                <thead style="position:sticky;top:0;background:#f5f5f5;">
+                <thead style="position:sticky;top:0;background:#f5f5f5;z-index:10;">
                   <tr>
+                    <th style="padding:4px;width:50px;text-align:center;border-bottom:1px solid #ccc;">#</th>
                     <th style="padding:4px;text-align:left;border-bottom:1px solid #ccc;">推荐</th>
                     <th style="padding:4px;text-align:left;border-bottom:1px solid #ccc;">模型 ID</th>
                     <th style="padding:4px;text-align:left;border-bottom:1px solid #ccc;">RPM / RPD / TPM</th>
@@ -122,6 +131,7 @@
                 <tbody id="geminiModelListBody">
                 </tbody>
               </table>
+              <div id="geminiFallbackStatus" style="margin-top:8px;font-size:0.8rem;"></div>
             </div>
           </details>
         </fieldset>

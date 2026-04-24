@@ -475,7 +475,10 @@ flowchart TD
 - **智能模型优先级**：按性能和配额将模型分为3个优先级（Flash Lite → Flash → Pro）
 - **自动切换策略**：配额错误等待5秒后重试，其他错误等待15秒后重试
 - **成功恢复**：成功调用后重置模型索引，优先使用高性能模型
-- **模型优先级配置**：
+- **用户可配置优先级**：在设置页面可以通过拖拽调整 Fallback 模型的优先顺序
+- **配置持久化**：用户自定义的模型优先级会保存到本地，下次启动自动加载
+- **多源配置加载**：优先级顺序为 环境变量 > 用户配置文件 > 全局配置文件 > 默认硬编码
+- **默认模型优先级**：
    1. **最优先级**（速度极快、配额最高）：gemini-3.1-flash-lite-preview、gemini-2.5-flash-lite、gemini-2.0-flash-lite
    2. **综合能力最强**：gemini-3-flash-preview、gemini-2.5-flash、gemini-2.0-flash
    3. **高级能力**（配额较低）：gemini-3.1-pro-preview、gemini-3-pro-preview、gemini-2.5-pro

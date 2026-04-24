@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { initGemini, callGemini, listGeminiModels } from '../services/gemini.js';
+import { initGemini, callGemini, listGeminiModels, getFallbackModels, setFallbackModels } from '../services/gemini.js';
 import { initAnthropic, callAnthropic } from '../services/anthropic.js';
 import { initOpenAICompat, callOpenAICompat } from '../services/openai-compat.js';
 import { readFileContent, listResumeFiles } from '../services/fileReader.js';
@@ -819,6 +819,49 @@ router.post('/preprocess-library', async (req, res) => {
     }
   }
   res.end();
+});
+
+// ============================================================================
+// Gemini Fallback Models Routes
+// ============================================================================
+
+/**
+ * GET /api/gemini/fallback-models
+ * Returns the current fallback model list.
+ */
+router.get('/gemini/fallback-models', (req, res) => {
+  try {
+    const models = getFallbackModels();
+    res.json({ success: true, models });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/gemini/fallback-models
+ * Updates the fallback model list and saves to config.
+ * Request body: { models: string[] }
+ */
+router.post('/gemini/fallback-models', (req, res) => {
+  try {
+    const { models } = req.body;
+    if (!models || !Array.isArray(models)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: '需要提供模型列表数组' 
+      });
+    }
+
+    const updatedModels = setFallbackModels(models);
+    res.json({ 
+      success: true, 
+      models: updatedModels, 
+      message: `已保存 ${updatedModels.length} 个 fallback 模型` 
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 export default router;

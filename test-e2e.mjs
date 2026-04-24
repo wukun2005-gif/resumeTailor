@@ -36,7 +36,11 @@
  * 
  * 【模型管理测试】模型连接相关时运行
  * ├── testListModels                - 模型列表
- * └── testListModelsWithInputKeyOverride - API Key覆盖
+ * ├── testListModelsWithInputKeyOverride - API Key覆盖
+ * ├── testGetGeminiFallbackModels  - 获取Fallback模型列表
+ * ├── testSetGeminiFallbackModels  - 设置Fallback模型列表
+ * ├── testResetGeminiFallbackToDefaults - 重置为默认Fallback列表
+ * └── testGeminiFallbackInvalidInput - 测试无效输入处理
  * 
  * Usage:
  *   GEMINI_KEY=xxx TEST_BASE=http://localhost:3003/api node test-e2e.mjs
@@ -780,6 +784,96 @@ async function testListModelsWithInputKeyOverride() {
 }
 
 // ============================================================================
+// Gemini Fallback 配置管理测试
+// ============================================================================
+
+async function testGetGeminiFallbackModels() {
+  const res = await getJSON('/gemini/fallback-models');
+  const data = await res.json();
+  log('/gemini/fallback-models success', data.success === true, JSON.stringify(data));
+  log('/gemini/fallback-models returns array', Array.isArray(data.models), `count=${data.models?.length}`);
+  log('/gemini/fallback-models has at least 9 models', data.models?.length >= 9, `count=${data.models?.length}`);
+  
+  if (data.models?.length) {
+    const firstModel = data.models[0];
+    log('/gemini/fallback-models first is gemini-3.1-flash-lite-preview', 
+        firstModel === 'gemini-3.1-flash-lite-preview' || firstModel === 'gemini-3-flash-preview' || firstModel === 'gemini-2.5-flash-lite',
+        `first=${firstModel}`);
+  }
+}
+
+async function testSetGeminiFallbackModels() {
+  const testModels = [
+    'gemini-1.5-pro',
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+  ];
+  
+  const res = await postJSON('/gemini/fallback-models', { models: testModels });
+  const data = await res.json();
+  
+  log('/gemini/fallback-models POST success', data.success === true, JSON.stringify(data));
+  log('/gemini/fallback-models POST returns updated models', 
+      Array.isArray(data.models) && data.models?.length >= 3, 
+      `count=${data.models?.length}`);
+  
+  // 验证保存是否生效
+  const getRes = await getJSON('/gemini/fallback-models');
+  const getData = await getRes.json();
+  
+  const testModelsSaved = testModels.every(m => getData.models?.includes(m));
+  log('/gemini/fallback-models save persists', testModelsSaved, 'models saved correctly');
+}
+
+async function testResetGeminiFallbackToDefaults() {
+  // 先设置自定义模型
+  const customModels = ['gemini-1.5-pro'];
+  await postJSON('/gemini/fallback-models', { models: customModels });
+  
+  // 然后验证能获取到（设置成功）
+  const getRes1 = await getJSON('/gemini/fallback-models');
+  const getData1 = await getRes1.json();
+  
+  log('/gemini/fallback-models custom set first', 
+      getData1.models?.includes('gemini-1.5-pro'), 
+      `models=${JSON.stringify(getData1.models?.slice(0,3))}`);
+  
+  // 现在设置回默认顺序（通过设置完整的默认列表）
+  const defaultModels = [
+    'gemini-3.1-flash-lite-preview',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-exp',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
+    'gemini-1.5-pro',
+  ];
+  
+  const resetRes = await postJSON('/gemini/fallback-models', { models: defaultModels });
+  const resetData = await resetRes.json();
+  
+  log('/gemini/fallback-models reset to defaults', 
+      resetData.success === true && resetData.models?.length >= 9,
+      `count=${resetData.models?.length}`);
+}
+
+async function testGeminiFallbackInvalidInput() {
+  // 测试无效的输入格式
+  const res1 = await postJSON('/gemini/fallback-models', {});
+  log('/gemini/fallback-models invalid empty input -> 400', 
+      res1.status === 400 || res1.ok === false, 
+      `status=${res1.status}`);
+  
+  // 测试非数组输入
+  const res2 = await postJSON('/gemini/fallback-models', { models: 'not-an-array' });
+  log('/gemini/fallback-models invalid non-array input -> 400', 
+      res2.status === 400 || res2.ok === false, 
+      `status=${res2.status}`);
+}
+
+// ============================================================================
 // PII功能测试
 // ============================================================================
 
@@ -1048,6 +1142,13 @@ async function main() {
     await delay(RATE_LIMIT_DELAY);
     await testListModels();
     await testListModelsWithInputKeyOverride();
+    
+    // ========== Gemini Fallback 配置管理测试 ==========
+    console.log('\n--- Gemini Fallback 配置管理测试 ---');
+    await testGetGeminiFallbackModels();
+    await testSetGeminiFallbackModels();
+    await testResetGeminiFallbackToDefaults();
+    await testGeminiFallbackInvalidInput();
 
     // ========== 文件操作测试 ==========
     console.log('\n--- 文件操作测试 ---');
