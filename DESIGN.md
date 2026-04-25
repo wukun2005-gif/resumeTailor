@@ -718,10 +718,7 @@ Mock 数据包含：
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
-| 2026-04-25 | Gemini Fallback UI 完整实现：在设置页面新增「Fallback 模型优先级排序」UI，支持上下按钮调整顺序、当前模型高亮、保存/恢复默认功能；新增前端 API 函数 getGeminiFallbackModels() / setGeminiFallbackModels()；新增前端交互逻辑和事件绑定；初始化时自动加载 fallback 列表 | src/api.js, index.html, src/main.js | - |
-| 2026-04-25 | Gemini 模型配置持久化：新增用户配置文件 config/user-models.json（优先级最高）；新增 API 端点 GET /api/gemini/fallback-models 和 POST /api/gemini/fallback-models；新增导出函数 getFallbackModels / setFallbackModels；新增模拟测试 test-gemini-persist.mjs；更新 loadFallbackModels() 优先级为 Env > User Config > Global Config > Default | server/services/gemini.js, server/routes/api.js, 新增 test-gemini-persist.mjs | - |
-| 2026-04-25 | Gemini 模型列表配置化：支持从环境变量（GEMINI_FALLBACK_MODELS，逗号分隔）或配置文件（config/models.json）加载模型列表；优先级：环境变量 > 配置文件 > 默认硬编码；完整错误处理和降级机制；新增模拟测试 test-gemini-config.mjs | server/services/gemini.js, 新增 test-gemini-config.mjs | - |
-| 2026-04-24 | 实现 Gemini 模型自动 fallback 机制：当当前模型配额不足或失败时，自动按优先级切换到下一个可用的免费模型；添加 FALLBACK_MODELS 数组、模型索引跟踪、配额错误检测等功能 | server/services/gemini.js | - |
+| 2026-04-25 | Gemini Fallback 完整实现：可配置 fallback 列表、拖拽排序 UI、持久化、新增 API 端点、完整测试 | server/services/gemini.js, server/routes/api.js, src/api.js, src/main.js, src/style.css, index.html, test-e2e.mjs, DESIGN.md, README.md | - |
 | 2026-04-24 | 整理 DESIGN.md 文档结构：修复章节编号混乱、独立功能模块章节；E2E 测试框架整改：移除无效测试、精简断言；修复 AI 预处理缓存测试、Reviewer agent 模型配置回归问题 | 文档整理/测试框架优化/Bug 修复 | - |
 | 2026-04-23 | AI 预处理素材库功能：新增 Preprocessor Agent、预处理指令区、预处理对话区、缓存隔离；指令区文件加载/保存功能 + 端到端测试；修复 sourceTokens 为0的 bug；导出功能显示 token 统计；改进本地 token 估算 | 功能增强/Bug 修复 | - |
 | 2026-04-22 | apply-review 缺失指令修复：在 diff 模式下添加 instructions 参数；状态展示位置移动：从底部移至标题旁 | Bug 修复/UI 改进 | - |
