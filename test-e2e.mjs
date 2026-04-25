@@ -54,6 +54,7 @@ import fsSync from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { FULL_PRESERVE_EXACT_NAMES, CACHE_SCHEMA_VERSION } from './server/services/libraryCache.js';
 
 // Get the directory of this test file (test-e2e.mjs) for reliable .env lookup
 const __filename = fileURLToPath(import.meta.url);
@@ -782,13 +783,6 @@ async function testDigestFullPreserveExactNames() {
   log('TC2: 精确白名单文件数量正确', preservedFiles.length === 3, `found ${preservedFiles.length} preserved files`);
   log('TC2: 白名单文件内容完整', preservedFiles.every(item => item.content.includes(testContent)), 'content preserved');
 }
-
-// 这里需要声明一下我们在测试中用到的精确白名单，因为测试文件中没有导入
-const FULL_PRESERVE_EXACT_NAMES = new Set([
-  'Written Essay.txt',
-  '项目经历.txt',
-  'Resume Tailor APP - PRD.md',
-]);
 
 /**
  * TC3: 测试 JD 信号显著压过 career 信号时的段落过滤

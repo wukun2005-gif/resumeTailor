@@ -58,6 +58,7 @@ const FULL_PRESERVE_EXACT_NAMES = new Set([
   '项目经历.txt',
   'Resume Tailor APP - PRD.md',
 ]);
+export { FULL_PRESERVE_EXACT_NAMES, CACHE_SCHEMA_VERSION };
 const FULL_PRESERVE_CONTENT_PATTERNS = [
   /\b(?:mvp\s+specification|product requirements? document|functional spec|technical spec|design spec|specification|prd)\b/i,
   /产品需求文档|需求文档|规格说明|规格书/,
