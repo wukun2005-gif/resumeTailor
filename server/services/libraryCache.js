@@ -37,7 +37,7 @@ function calculateEstimatedTokens(text) {
 
 const CACHE_DIR = '.resume-tailor-cache';
 const CACHE_FILE = 'digest.json';
-const CACHE_SCHEMA_VERSION = 'digest-v7';
+const CACHE_SCHEMA_VERSION = 'digest-v8';
 const POSITIVE_FILE_NAME_PATTERNS = [
   /\bresume\b/i,
   /\bcv\b/i,
@@ -53,6 +53,11 @@ const FULL_PRESERVE_FILE_NAME_PATTERNS = [
   /项目经历|需求文档|架构设计|规格书/,
   /project[_ -]?experience/i,
 ];
+const FULL_PRESERVE_EXACT_NAMES = new Set([
+  'Written Essay.txt',
+  '项目经历.txt',
+  'Resume Tailor APP - PRD.md',
+]);
 const FULL_PRESERVE_CONTENT_PATTERNS = [
   /\b(?:mvp\s+specification|product requirements? document|functional spec|technical spec|design spec|specification|prd)\b/i,
   /产品需求文档|需求文档|规格说明|规格书/,
@@ -73,6 +78,8 @@ const JD_PATTERNS = [
   /(?:任职要求|职位要求|岗位要求|最低资格|优先资格|教育背景要求|qualifications|requirements)/i,
   /(?:加分项|福利|我们正在寻找|薪资|about the role|what we offer)/i,
   /(?:招聘|投递|role number|posted|hiring|job description)/i,
+  /(?:preferred|nice to have|bonus|加分|优先考虑)/i,
+  /(?:you will|you'll|you are|we are looking)/i,
 ];
 const PROMPT_PATTERNS = [
   /下面是职位jd|下面是面向这个jd|给每个版本打分|哪个版本最好|请根据.*jd|请改写|请润色|请重写|请你评审|通过.*筛选/,
@@ -472,6 +479,7 @@ function isNovelFingerprintStrict(candidate, seenFingerprints) {
  */
 function classifyFileLayer(fileName) {
   const name = String(fileName || '').trim();
+  if (FULL_PRESERVE_EXACT_NAMES.has(name)) return 0;
   if (FULL_PRESERVE_FILE_NAME_PATTERNS.some(p => p.test(name))) return 0;
   // Full YYYY-MM or YYYY-MM-DD date in filename → always a dated delivery version.
   if (DATED_DELIVERY_FILE_PATTERN.test(name)) return 2;
@@ -527,6 +535,7 @@ function shouldPreserveFullFile(fileName, content) {
   const name = String(fileName || '').trim();
   const normalized = normalizeLooseText(content);
   if (!name || !normalized) return false;
+  if (FULL_PRESERVE_EXACT_NAMES.has(name)) return true;
   if (FULL_PRESERVE_FILE_NAME_PATTERNS.some(pattern => pattern.test(name))) return true;
   if (FULL_PRESERVE_CONTENT_PATTERNS.some(pattern => pattern.test(normalized))) {
     return getJdSignalScore(normalized) === 0 || getCareerSignalScore(normalized) >= 2;
@@ -539,8 +548,16 @@ function isRelevantCareerParagraph(text) {
   if (!cleaned || cleaned.length < 18) return false;
   if (isLikelyBoilerplateParagraph(cleaned)) return false;
   if (getPromptSignalScore(cleaned) > 0) return false;
-  if (getJdSignalScore(cleaned) > 0 && getCareerSignalScore(cleaned) === 0) return false;
-  return getCareerSignalScore(cleaned) > 0;
+  
+  const jdScore = getJdSignalScore(cleaned);
+  const careerScore = getCareerSignalScore(cleaned);
+  
+  // 原有：jdScore > 0 且无 career 信号则过滤
+  if (jdScore > 0 && careerScore === 0) return false;
+  // 新增：JD 信号显著（>=2）且压过 career 信号时也过滤
+  if (jdScore >= 2 && jdScore > careerScore) return false;
+  
+  return careerScore > 0;
 }
 
 function isLikelyBoilerplateParagraph(text) {
@@ -550,6 +567,10 @@ function isLikelyBoilerplateParagraph(text) {
   if (PAGE_ARTIFACT_PATTERN.test(text) && getCareerSignalScore(text) === 0) return true;
   if (CONTACT_PATTERN.test(text) && getCareerSignalScore(text) === 0 && text.length < 140) return true;
   if (/^(?:wu kun|kun wu|吴坤)$/.test(lower)) return true;
+  // 新增：纯日期行
+  if (/^\d{4}[-/.]\d{1,2}(?:[-/.]\d{1,2})?$/.test(text.trim())) return true;
+  // 新增：PDF 页脚/水印
+  if (/confidential|机密|draft|草稿/i.test(text) && text.length < 60) return true;
   return false;
 }
 
@@ -598,6 +619,8 @@ function shouldStartNewBlock(line, currentLines) {
   if (currentLength >= 240) return true;
   if (isTimelineLine(line)) return true;
   if (CONTACT_PATTERN.test(line) && currentLength > 0) return true;
+  // 新增：当前行以动词开头且已有内容时拆分
+  if (currentLength >= 60 && ACTION_VERB_PATTERN.test(line)) return true;
   return false;
 }
 

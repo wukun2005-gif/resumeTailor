@@ -704,6 +704,240 @@ async function testDigestLayeredDedup() {
 }
 
 // ============================================================================
+// 本地预处理优化测试（TC1-TC7）
+// ============================================================================
+
+/**
+ * TC1: 测试 JD 段落过滤功能
+ */
+async function testDigestJdParagraphFiltering() {
+  console.log('\n[Test] TC1: JD 段落过滤');
+  
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-tc1-'));
+  
+  // 创建包含 JD 段落和正常简历段落的文件
+  await fs.writeFile(path.join(dir, 'resume_with_jd.txt'), [
+    'Senior Program Manager',
+    '',
+    'Microsoft | Senior PM | 2022-01 - 2025-01',
+    '- Led cross-functional AI platform delivery and improved customer satisfaction by 20%.',
+    '',
+    '岗位职责：',
+    '- 负责产品规划和设计',
+    '- 与算法团队协作优化流程',
+    '任职要求：',
+    '- 5年以上产品经理经验',
+    '- 熟悉AI/ML工作流',
+    '',
+    '- Drove end-to-end RAG search relevance improvements, increasing NDCG by 10%.',
+  ].join('\n'), 'utf-8');
+  
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+  
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  const flattened = data.digest.map(item => item.content).join('\n');
+  
+  // 验证正常简历段落被保留
+  log('TC1: 正常简历段落被保留', 
+      flattened.includes('Led cross-functional AI platform delivery') && 
+      flattened.includes('Drove end-to-end RAG search relevance'), 
+      'found valid career paragraphs');
+  
+  // 验证 JD 段落被过滤掉
+  log('TC1: JD 段落被过滤', 
+      !flattened.includes('岗位职责') && 
+      !flattened.includes('任职要求') && 
+      !flattened.includes('负责产品规划'), 
+      'JD signals filtered out');
+}
+
+/**
+ * TC2: 测试精确文件名白名单功能
+ */
+async function testDigestFullPreserveExactNames() {
+  console.log('\n[Test] TC2: 精确文件名白名单');
+  
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-tc2-'));
+  
+  // 创建白名单中的文件
+  const testContent = '这是一段测试内容，应该被完整保留。\n\n第二段内容。';
+  await fs.writeFile(path.join(dir, 'Written Essay.txt'), testContent, 'utf-8');
+  await fs.writeFile(path.join(dir, '项目经历.txt'), testContent, 'utf-8');
+  await fs.writeFile(path.join(dir, 'Resume Tailor APP - PRD.md'), testContent, 'utf-8');
+  
+  // 创建普通简历文件
+  await fs.writeFile(path.join(dir, 'resume_base.txt'), 'Senior PM with 10 years experience', 'utf-8');
+  
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+  
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  
+  // 验证白名单文件被完整保留
+  const preservedFiles = data.digest.filter(item => 
+    FULL_PRESERVE_EXACT_NAMES.has(item.name)
+  );
+  
+  log('TC2: 精确白名单文件数量正确', preservedFiles.length === 3, `found ${preservedFiles.length} preserved files`);
+  log('TC2: 白名单文件内容完整', preservedFiles.every(item => item.content.includes(testContent)), 'content preserved');
+}
+
+// 这里需要声明一下我们在测试中用到的精确白名单，因为测试文件中没有导入
+const FULL_PRESERVE_EXACT_NAMES = new Set([
+  'Written Essay.txt',
+  '项目经历.txt',
+  'Resume Tailor APP - PRD.md',
+]);
+
+/**
+ * TC3: 测试 JD 信号显著压过 career 信号时的段落过滤
+ */
+async function testDigestJdDominantParagraphFiltered() {
+  console.log('\n[Test] TC3: JD 主导段落过滤');
+  
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-tc3-'));
+  
+  // 创建包含混合 JD 和少量 career 信号的段落
+  await fs.writeFile(path.join(dir, 'mixed_paragraphs.txt'), [
+    '工作职责：负责产品规划和设计，与团队协作。',
+    '我们正在寻找优秀的产品经理，要求有 5 年经验。',
+    'Microsoft | Senior Program Manager | 2022-2025',
+    'Led AI platform delivery with 200% DAU growth.',
+  ].join('\n'), 'utf-8');
+  
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+  
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  const flattened = data.digest.map(item => item.content).join('\n');
+  
+  log('TC3: 正常 career 段落被保留', 
+      flattened.includes('Led AI platform delivery'), 
+      'found valid career paragraph');
+  
+  log('TC3: JD 主导段落被过滤', 
+      !flattened.includes('工作职责：负责产品规划') && 
+      !flattened.includes('我们正在寻找优秀的产品经理'), 
+      'JD dominant paragraphs filtered');
+}
+
+/**
+ * TC4: 测试 boilerplate 过滤（纯日期行、PDF 水印等）
+ */
+async function testDigestBoilerplateFiltering() {
+  console.log('\n[Test] TC4: Boilerplate 过滤');
+  
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-tc4-'));
+  
+  await fs.writeFile(path.join(dir, 'boilerplate_test.txt'), [
+    '2024-03-15',
+    'Microsoft | Senior PM | 2022-2025',
+    'Confidential',
+    'DRAFT',
+    'Led AI platform delivery',
+    'Page 1 of 10',
+  ].join('\n'), 'utf-8');
+  
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+  
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  const flattened = data.digest.map(item => item.content).join('\n');
+  
+  log('TC4: 有用内容被保留', flattened.includes('Led AI platform delivery'), 'valid content found');
+  log('TC4: 纯日期行被过滤', !flattened.includes('2024-03-15'), 'date line filtered');
+  log('TC4: PDF 水印被过滤', !flattened.includes('Confidential') && !flattened.includes('DRAFT'), 'watermarks filtered');
+}
+
+/**
+ * TC5: 测试缓存版本升级（v7 -> v8）
+ */
+async function testDigestCacheVersionUpgrade() {
+  console.log('\n[Test] TC5: 缓存版本升级');
+  
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-tc5-'));
+  const cacheDir = path.join(dir, '.resume-tailor-cache');
+  await fs.mkdir(cacheDir, { recursive: true });
+  
+  // 创建旧版本缓存（v7）
+  const oldCacheData = {
+    key: 'old-cache-key',
+    digest: [{ name: 'old.txt', content: 'old content' }],
+    sourceTokens: 10
+  };
+  await fs.writeFile(path.join(cacheDir, 'digest.json'), JSON.stringify(oldCacheData), 'utf-8');
+  
+  // 创建测试文件
+  await fs.writeFile(path.join(dir, 'test.txt'), 'Senior Program Manager with 10 years experience', 'utf-8');
+  
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+  
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  
+  // 验证没有使用旧缓存，fromCache 应该是 false
+  log('TC5: 旧版本缓存没有被使用', data.fromCache === false, `fromCache=${data.fromCache}`);
+  log('TC5: 使用了新内容', !data.digest.some(item => item.content === 'old content'), 'new content used');
+}
+
+/**
+ * TC6: 测试 Layer 0 文件内容不会被后续去重
+ */
+async function testDigestPreservedFileNotDeduped() {
+  console.log('\n[Test] TC6: Layer 0 文件不受后续去重影响');
+  
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-tc6-'));
+  
+  const sharedParagraph = 'Led cross-functional AI platform delivery';
+  
+  // Layer 0 文件（白名单文件）
+  await fs.writeFile(path.join(dir, '项目经历.txt'), sharedParagraph, 'utf-8');
+  
+  // Layer 1 文件（包含相同内容）
+  await fs.writeFile(path.join(dir, 'resume_base.txt'), sharedParagraph, 'utf-8');
+  
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+  
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  
+  // 验证 Layer 0 文件的内容被保留
+  const preservedFile = data.digest.find(item => item.name === '项目经历.txt');
+  log('TC6: Layer 0 文件内容被保留', preservedFile && preservedFile.content.includes(sharedParagraph), 'preserved content found');
+}
+
+/**
+ * TC7: 测试动词开头行触发段落分割
+ */
+async function testDigestActionVerbBlockSplit() {
+  console.log('\n[Test] TC7: 动词开头行段落分割');
+  
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-tc7-'));
+  
+  // 无空行的连续行，每行以动词开头
+  await fs.writeFile(path.join(dir, 'no_blank_lines.txt'), [
+    'Microsoft | Senior PM | 2022-2025',
+    'Led cross-functional team',
+    'Built new product features',
+    'Drove revenue growth',
+  ].join('\n'), 'utf-8');
+  
+  await postJSON('/init', getInitPayload(false, ['/tmp', dir]));
+  
+  const res = await postJSON('/library-digest', { dir });
+  const data = await res.json();
+  
+  // 我们无法直接检查段落分割，但可以验证内容都被正确处理
+  const flattened = data.digest.map(item => item.content).join('\n');
+  log('TC7: 所有有效内容都被保留', 
+      flattened.includes('Led cross-functional') && 
+      flattened.includes('Built new product') && 
+      flattened.includes('Drove revenue'), 
+      'all action verb content preserved');
+}
+
+// ============================================================================
 // JD解析测试
 // ============================================================================
 
@@ -1156,6 +1390,17 @@ async function main() {
     await testFileRoutesAndDigest();
     await testDigestNoBlanksDedup();
     await testDigestLayeredDedup();
+    
+    // ========== 本地预处理优化测试 ==========
+    console.log('\n--- 本地预处理优化测试 ---');
+    await delay(RATE_LIMIT_DELAY);
+    await testDigestJdParagraphFiltering();
+    await testDigestFullPreserveExactNames();
+    await testDigestJdDominantParagraphFiltered();
+    await testDigestBoilerplateFiltering();
+    await testDigestCacheVersionUpgrade();
+    await testDigestPreservedFileNotDeduped();
+    await testDigestActionVerbBlockSplit();
 
     // ========== PII功能测试 ==========
     console.log('\n--- PII功能测试 ---');
