@@ -718,6 +718,7 @@ Mock 数据包含：
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-04-27 | OpenRouter Anthropic 缓存修复：添加 `anthropic-beta: prompt-caching-2024-07-31` 请求头和 `extra_body.stream_options` 配置；新增 `test-openai-compat.mjs` 单元测试验证缓存请求体结构（18 个测试用例全部通过） | server/services/openai-compat.js, test-openai-compat.mjs, DESIGN.md | - |
 | 2026-04-25 | 本地预处理优化：精确文件名白名单、增强 JD 段落过滤、boilerplate 过滤增强、段落分割优化、缓存版本升级、完整测试用例 | server/services/libraryCache.js, test-e2e.mjs, DESIGN.md | - |
 | 2026-04-25 | Gemini Fallback 完整实现：可配置 fallback 列表、拖拽排序 UI、持久化、新增 API 端点、完整测试 | server/services/gemini.js, server/routes/api.js, src/api.js, src/main.js, src/style.css, index.html, test-e2e.mjs, DESIGN.md, README.md | - |
 | 2026-04-24 | 整理 DESIGN.md 文档结构：修复章节编号混乱、独立功能模块章节；E2E 测试框架整改：移除无效测试、精简断言；修复 AI 预处理缓存测试、Reviewer agent 模型配置回归问题 | 文档整理/测试框架优化/Bug 修复 | - |

@@ -18,6 +18,12 @@ export function getOpenAICompatConnection(connectionId) {
   return connections.get(connectionId);
 }
 
+function isAnthropicModel(connectionId, conn) {
+  if (connectionId && connectionId.toLowerCase().includes('anthropic')) return true;
+  const model = (conn?.model || '').toLowerCase();
+  return model.includes('claude');
+}
+
 /**
  * Call an OpenAI-compatible chat completions endpoint with streaming.
  * @param {string} connectionId - The connection identifier
@@ -62,31 +68,39 @@ export async function callOpenAICompat(connectionId, prompt, onChunk, opts = {})
 
   const url = `${conn.baseURL}/chat/completions`;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${conn.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: conn.model,
-      messages,
-      max_tokens: opts.maxTokens || 16384,
-      temperature: opts.temperature ?? 0.7,
-      stream: true,
-      ...(opts.jsonMode && { response_format: { type: 'json_object' } }),
-    }),
-  });
-/**
- * 判断当前连接是否为 Anthropic 模型（OpenRouter/Anthropic均可）
- * @param {string} connectionId
- * @param {object} conn
- */
-function isAnthropicModel(connectionId, conn) {
-  if (connectionId && connectionId.toLowerCase().includes('anthropic')) return true;
-  const model = (conn?.model || '').toLowerCase();
-  return model.includes('claude');
-}
+  const isAnthropic = isAnthropicModel(connectionId, conn);
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${conn.apiKey}`,
+  };
+  if (isAnthropic) {
+    headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
+  }
+
+  const body = {
+    model: conn.model,
+    messages,
+    max_tokens: opts.maxTokens || 16384,
+    temperature: opts.temperature ?? 0.7,
+    stream: true,
+    ...(opts.jsonMode && { response_format: { type: 'json_object' } }),
+  };
+  if (isAnthropic) {
+    body.extra_body = {
+      stream_options: { include_usage: true },
+    };
+  }
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    throw new Error(`Network error: ${error.message}`);
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
