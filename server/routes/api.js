@@ -736,7 +736,6 @@ router.post('/preprocess-library', async (req, res) => {
       : chunk => { restoredText += chunk; sendSSE(res, { type: 'chunk', text: chunk }); };
 
     try {
-      console.log(`[AI Preprocess] Calling AI model: ${model}, sourceTokens: ${sourceTokens}`);
       const result = await caller(
         chatMessages ? null : user, 
         onChunk, 
@@ -746,8 +745,7 @@ router.post('/preprocess-library', async (req, res) => {
           maxTokens: 16384 
         }
       );
-      console.log(`[AI Preprocess] AI call succeeded, output length: ${restoredText.length}`);
-      
+
       // End the restorer to flush any remaining content
       if (restorer) restorer.end();
 
@@ -780,8 +778,7 @@ router.post('/preprocess-library', async (req, res) => {
 
     } catch (aiErr) {
       // AI failed, fallback to local preprocessing
-      console.error(`[AI Preprocess] AI call failed:`, aiErr.message);
-      
+
       // Provide more helpful error message
       let errorMessage = aiErr.message;
       if (sourceTokens > 1000000) {
