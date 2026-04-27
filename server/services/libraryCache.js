@@ -39,7 +39,7 @@ const CACHE_DIR = '.resume-tailor-cache';
 const CACHE_FILE = 'digest.json';
 const CACHE_SCHEMA_VERSION = 'digest-v8';
 const POSITIVE_FILE_NAME_PATTERNS = [
-  /\bresume\b/i,
+  /resume/i,
   /\bcv\b/i,
   /简历/,
   /求职信/,
@@ -527,8 +527,8 @@ function shouldKeepFile(fileName, content) {
   const careerScore = getCareerSignalScore(normalized);
 
   if (promptScore >= 2) return false;
-  if (jdScore >= 2) return false;
   if (POSITIVE_FILE_NAME_PATTERNS.some(pattern => pattern.test(name))) return true;
+  if (jdScore >= 2 && careerScore < 2) return false;
   return careerScore >= 2;
 }
 
@@ -556,7 +556,7 @@ function isRelevantCareerParagraph(text) {
   // 原有：jdScore > 0 且无 career 信号则过滤
   if (jdScore > 0 && careerScore === 0) return false;
   // 新增：JD 信号显著（>=2）且压过 career 信号时也过滤
-  if (jdScore >= 2 && jdScore > careerScore) return false;
+  if (jdScore >= 2 && jdScore >= careerScore) return false;
   
   return careerScore > 0;
 }
@@ -603,6 +603,9 @@ function getJdSignalScore(text) {
 function classifyLine(line) {
   if (!line || /^[-_=]{3,}$/.test(line)) return 'noise';
   if (PAGE_ARTIFACT_PATTERN.test(line) && !DATE_RANGE_PATTERN.test(line)) return 'noise';
+  // Standalone boilerplate words (e.g. PDF watermarks) — treat as noise
+  // to prevent them from merging with adjacent career content.
+  if (/^(?:confidential|机密|draft|草稿)$/i.test(line.trim())) return 'noise';
   const stripped = stripLineDecoration(line);
   if (!stripped) return 'noise';
   if (SECTION_HEADING_PATTERN.test(stripped)) return 'heading';

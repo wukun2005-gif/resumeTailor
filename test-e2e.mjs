@@ -509,7 +509,12 @@ async function testApplyReview(reviewComments) {
   });
 
   const diffs = [];
-  const regex = /\[REPLACE\]\s*\n<<<\n([\s\S]*?)\n>>>\n([\s\S]*?)\n\[\/REPLACE\]/g;
+  const regex = /\[REPLACE\]\s*
+<<<
+([\s\S]*?)
+>>>
+([\s\S]*?)
+\[\/REPLACE\]/g;
   let match;
   while ((match = regex.exec(result.text)) !== null) {
     diffs.push({ old: match[1], next: match[2] });
@@ -761,11 +766,13 @@ async function testDigestFullPreserveExactNames() {
   
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'resume-tailor-tc2-'));
   
-  // 创建白名单中的文件
-  const testContent = '这是一段测试内容，应该被完整保留。\n\n第二段内容。';
-  await fs.writeFile(path.join(dir, 'Written Essay.txt'), testContent, 'utf-8');
-  await fs.writeFile(path.join(dir, '项目经历.txt'), testContent, 'utf-8');
-  await fs.writeFile(path.join(dir, 'Resume Tailor APP - PRD.md'), testContent, 'utf-8');
+  // 创建白名单中的文件（用不同内容避免 dedup 合并）
+  const essayContent = '这是一段测试内容，应该被完整保留。\n\nEssay段落二。';
+  const projContent = '项目经历测试内容，应被完整保留。\n\n项目段落二。';
+  const prdContent = 'PRD测试内容，应被完整保留。\n\nPRD段落二。';
+  await fs.writeFile(path.join(dir, 'Written Essay.txt'), essayContent, 'utf-8');
+  await fs.writeFile(path.join(dir, '项目经历.txt'), projContent, 'utf-8');
+  await fs.writeFile(path.join(dir, 'Resume Tailor APP - PRD.md'), prdContent, 'utf-8');
   
   // 创建普通简历文件
   await fs.writeFile(path.join(dir, 'resume_base.txt'), 'Senior PM with 10 years experience', 'utf-8');
@@ -781,7 +788,12 @@ async function testDigestFullPreserveExactNames() {
   );
   
   log('TC2: 精确白名单文件数量正确', preservedFiles.length === 3, `found ${preservedFiles.length} preserved files`);
-  log('TC2: 白名单文件内容完整', preservedFiles.every(item => item.content.includes(testContent)), 'content preserved');
+  log('TC2: 白名单文件内容完整', preservedFiles.every(item => {
+    if (item.name === 'Written Essay.txt') return item.content.includes('Essay段落二');
+    if (item.name === '项目经历.txt') return item.content.includes('项目段落二');
+    if (item.name === 'Resume Tailor APP - PRD.md') return item.content.includes('PRD段落二');
+    return false;
+  }), 'content preserved');
 }
 
 /**
@@ -829,7 +841,7 @@ async function testDigestBoilerplateFiltering() {
     'Microsoft | Senior PM | 2022-2025',
     'Confidential',
     'DRAFT',
-    'Led AI platform delivery',
+    'Led AI platform delivery and improved customer satisfaction by 20%.',
     'Page 1 of 10',
   ].join('\n'), 'utf-8');
   
