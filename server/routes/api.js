@@ -493,13 +493,29 @@ router.post('/ocr-jd-images', async (req, res) => {
     }
 
     const caller = getModelCaller(model);
+
+    // System prompt: semantically isolate this request from any server-side context caching
+    const system = [
+      '你是一个精准的JD图片OCR助手。',
+      '重要规则：',
+      '- 只输出当前图片中实际可见的文字内容',
+      '- 绝对不要回忆、重复、或补充任何之前请求中出现过的内容',
+      '- 每次请求都是全新的、独立的，之前没有任何上下文',
+      '- 如果图片中没有可识别的文字，只输出空字符串',
+    ].join('\n');
+
+    // Unique request ID to break server-side cache association
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
     const messages = [{
       role: 'user',
       content: [
         ...images.map(img => ({ type: 'file', mimeType: img.mimeType, data: img.data })),
         {
           type: 'text',
-          text: `请按图片顺序读取这些招聘JD截图，输出一份干净的纯文本JD。
+          text: `[Request-ID: ${requestId}]
+
+请按图片顺序读取这些招聘JD截图，输出一份干净的纯文本JD。
 
 要求：
 1. 保留职位名称、公司、部门、岗位职责、任职要求等关键信息
@@ -511,7 +527,7 @@ router.post('/ocr-jd-images', async (req, res) => {
       ],
     }];
 
-    const result = await caller(null, () => {}, { messages, maxTokens: 4096, temperature: 0.1 });
+    const result = await caller(null, () => {}, { messages, system, maxTokens: 4096, temperature: 0 });
     res.json({ text: result.text.trim(), usage: result.usage, model });
   } catch (err) {
     res.status(500).json({ error: err.message });

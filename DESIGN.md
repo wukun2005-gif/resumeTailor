@@ -401,6 +401,7 @@ data: {"type":"done"}
 - 输入：图片数组（base64）
 - 输出：整理后的 JD 纯文本
 - 状态：仅在初始勾选 AI 或后续补救时调用，主流程不重复发送图片。
+- **上下文隔离**：该路由添加了 system prompt（声明每次请求独立、禁止回忆历史内容）和唯一请求 ID（打破供应商服务端缓存关联），temperature 设为 0，以防止 Google Gemini API 等供应商的服务端上下文缓存导致历史 OCR 结果泄漏到当前响应中。
 
 JD 输入框中只保留最终的 JD 纯文本，不写入批次号、图片文件名或其他技术分隔符，因此不会额外污染 prompt，也不会为这些辅助标记消耗 token。
 
@@ -783,6 +784,7 @@ Mock 数据包含：
 |------|------|----------|-------------|
 | 2026-04-28 | 推理强度（Extended Thinking）功能：①前端 Agent 区新增推理强度下拉（无/低/中/高），每个创作类 Agent 独立配置；②后端三个 SDK 支持 reasoning 参数（Anthropic thinking、Gemini thinkingConfig、OpenAI-compat reasoning_effort）；③非创作类路由强制覆盖为 none；④新增 13 个推理强度测试用例 | index.html, src/main.js, src/style.css, server/routes/api.js, server/services/anthropic.js, server/services/gemini.js, server/services/openai-compat.js, test-e2e.mjs, DESIGN.md | - |
 | 2026-04-28 | 测试文件合并：将 `test-openai-compat.mjs`（OpenAI-Compat 缓存行为 + State.js 加密测试）迁移到 `test-e2e.mjs`，删除原文件；新增【OpenAI-Compat缓存测试】和【State.js加密测试】两个测试分组；修复 `/apply-review` regex 匹配问题（`>>>>`→`>>>`） | test-e2e.mjs, test-openai-compat.mjs(删除), DESIGN.md | - |
+| 2026-04-28 | 修复 JD AI OCR 上下文缓存泄漏 Bug：Google Gemini API 在同一 API Key 下维护服务端上下文缓存，导致新 OCR 请求返回历史残留内容。修复方案：①添加 system prompt 语义隔离（声明每次请求独立、禁止回忆历史）；②在 user prompt 前添加唯一 Request-ID 打破缓存关联；③temperature 从 0.1 降为 0。经测试确认修复有效，连续多次 OCR 同一图片均无残留 | server/routes/api.js, DESIGN.md | - |
 | 2026-04-28 | 修复 PII 脱敏区显示乱码：①指纹移除 navigator.userAgent（浏览器更新不再导致解密失败）；②解密失败返回空字符串而非 base64 密文（防止双重加密永久损坏数据）；③新增 looksLikeCiphertext 双重加密检测；④新增 migrateCredential 旧指纹兼容迁移；⑤ restoreState 自动迁移所有凭证 | src/state.js, src/main.js, DESIGN.md | - |
 | 2026-04-27 | OpenRouter Anthropic 缓存修复：添加 `anthropic-beta: prompt-caching-2024-07-31` 请求头和 `extra_body.stream_options` 配置；新增 `test-openai-compat.mjs` 单元测试验证缓存请求体结构（18 个测试用例全部通过） | server/services/openai-compat.js, test-openai-compat.mjs, DESIGN.md | - |
 | 2026-04-27 | TC1-TC7 本地预处理测试修复：① shouldKeepFile 检查顺序调整（正向文件名检查先于 jdScore>=2）；② jdScore>=2 过滤增加 careerScore<2 条件（避免混合内容文件整文件丢弃）；③ isRelevantCareerParagraph 中 jdScore>careerScore 改为 jdScore>=careerScore（修正中文动作动词导致的 false career 信号）；④ classifyLine 增加独立 boilerplate 词识别（Confidential/DRAFT 归为 noise）；⑤ POSITIVE_FILE_NAME_PATTERNS 中 \bresume\b 改为 resume（修复下划线作为词边界问题）；⑥ TC2/TC4 测试数据优化 | server/services/libraryCache.js, test-e2e.mjs | - |
