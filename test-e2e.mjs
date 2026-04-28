@@ -509,12 +509,7 @@ async function testApplyReview(reviewComments) {
   });
 
   const diffs = [];
-  const regex = /\[REPLACE\]\s*
-<<<
-([\s\S]*?)
->>>
-([\s\S]*?)
-\[\/REPLACE\]/g;
+  const regex = new RegExp('\\[REPLACE\\]\\s*<<<([\\s\\S]*?)>>>>([\\s\\S]*?)\\[\\/REPLACE\\]', 'g');
   let match;
   while ((match = regex.exec(result.text)) !== null) {
     diffs.push({ old: match[1], next: match[2] });
@@ -1344,10 +1339,30 @@ async function testPreprocessLibrary() {
 // ============================================================================
 
 async function main() {
+  const args = process.argv.slice(2);
+  const piiOnly = args.includes('--pii-only');
+
   console.log('\n=== Resume Tailor E2E Tests ===\n');
-  console.log('提示：可根据开发功能选择运行特定测试组，详见文件头部注释\n');
+  if (piiOnly) {
+    console.log('模式：仅运行 PII 功能测试\n');
+  } else {
+    console.log('提示：可根据开发功能选择运行特定测试组，详见文件头部注释\n');
+  }
 
   try {
+    if (piiOnly) {
+      // ========== PII功能测试 ==========
+      console.log('\n--- PII功能测试 ---');
+      await testInitPii();
+      await delay(RATE_LIMIT_DELAY);
+      const piiGenerated = await testPiiGenerate();
+      await delay(RATE_LIMIT_DELAY);
+      await testPiiReview(piiGenerated);
+      await delay(RATE_LIMIT_DELAY);
+      await testPiiChat();
+      await delay(RATE_LIMIT_DELAY);
+      await testPiiGenerateHtml();
+    } else {
     // ========== 核心流程测试 ==========
     console.log('\n--- 核心流程测试 ---');
     await testInitBase();
@@ -1420,6 +1435,8 @@ async function main() {
     await testPiiChat();
     await delay(RATE_LIMIT_DELAY);
     await testPiiGenerateHtml();
+
+    } // end else (full test suite)
 
     // ========== AI预处理测试 ==========
     console.log('\n--- AI预处理测试 ---');

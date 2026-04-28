@@ -877,9 +877,11 @@ async function restoreState() {
     if (keyInput) keyInput.value = savedKey;
     if (urlInput) urlInput.value = savedUrl;
     if (modelInput) modelInput.value = savedModel;
+    // Migrate credential to stable fingerprint if it was encrypted with the legacy one
+    await state.migrateCredential(`connKey_${def.id}`);
   }
 
-  // Migrate from old format if needed
+  // Migrate old-format keys
   const oldAnthropicKey = await state.getCredential('anthropicKey');
   const oldGeminiKey = await state.getCredential('geminiKey');
   if (oldAnthropicKey && !await state.getCredential('connKey_jiekou-anthropic')) {
@@ -895,6 +897,10 @@ async function restoreState() {
     const modelInput = getConnInput('google-studio-google', 'model');
     if (modelInput) modelInput.value = state.get('geminiModelName', 'gemini-2.5-flash');
   }
+  // Migrate old-format credential keys
+  await state.migrateCredential('anthropicKey');
+  await state.migrateCredential('anthropicUrl');
+  await state.migrateCredential('geminiKey');
 
   // Restore non-connection settings
   els.libraryPath.value = state.get('libraryPath');
@@ -919,6 +925,11 @@ async function restoreState() {
   els.cfgPiiGithub.value = await state.getCredential('pii_github');
   els.cfgPiiWebsite.value = await state.getCredential('pii_website');
   els.cfgPiiOther.value = await state.getCredential('pii_other');
+  // Migrate PII credentials to stable fingerprint
+  for (const k of ['pii_nameEn', 'pii_nameZh', 'pii_nameVariants', 'pii_email',
+                    'pii_phone', 'pii_linkedin', 'pii_github', 'pii_website', 'pii_other']) {
+    await state.migrateCredential(k);
+  }
 
   restoreDraftState();
 }

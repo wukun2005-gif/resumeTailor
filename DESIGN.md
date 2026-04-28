@@ -217,10 +217,14 @@ data: {"type":"done"}
 ### 6.1 `state.js` — localStorage + AES-GCM 加密
 
 - 非敏感数据：`state.get(key)` / `state.set(key, value)` — 明文存 localStorage
-- 敏感数据（API Key）：`state.getCredential(key)` / `state.setCredential(key, value)` — AES-GCM 加密
-- 加密密钥通过 PBKDF2 从浏览器指纹派生（`navigator.userAgent + screen.width + ...`）
-- 凭证 key 命名：`connKey_{connectionId}`（如 `connKey_jiekou-anthropic`）
+- 敏感数据（API Key、PII 配置）：`state.getCredential(key)` / `state.setCredential(key, value)` — AES-GCM 加密
+- 加密密钥通过 PBKDF2 从**稳定浏览器指纹**派生（`screen.width + screen.height + navigator.language`，不含 `navigator.userAgent`）
+- 凭证 key 命名：`connKey_{connectionId}`（如 `connKey_jiekou-anthropic`）、`pii_*`（如 `pii_nameEn`）
 - 非凭证配置 key：`connUrl_{connectionId}`、`connModel_{connectionId}`
+- **解密失败保护**：`decryptValue` 失败时返回空字符串而非原始密文，防止密文被回写导致双重加密永久损坏
+- **双重加密检测**：`setCredential` 在加密前检测值是否像 base64 密文（`looksLikeCiphertext`），若是则清空再保存
+- **旧指纹兼容迁移**：`migrateCredential(key)` 先尝试稳定指纹解密，失败后尝试旧指纹（含 `userAgent`），成功则自动用稳定指纹重新加密；若检测到双重加密则清空数据
+- 迁移由 `restoreState()` 在恢复凭证后自动调用
 
 ### 6.2 持久化的设置项
 | Key | 说明 | 加密 |
@@ -612,7 +616,7 @@ Mock 数据包含：
 - Google AI Studio 需要 VPN（中国大陆网络限制）
 - Gemini 不同模型的免费配额差异较大；模型列表只显示"免费且适合文本生成"的 Gemini 模型，默认优先使用 `gemini-2.5-flash`
 - OpenAI-compat 的 PDF 多模态支持有限（转为文本占位符）
-- 加密基于浏览器指纹，更换浏览器会丢失已保存凭证
+- 加密基于稳定浏览器指纹（`screen.width + screen.height + navigator.language`），更换浏览器或屏幕分辨率变化会丢失已保存凭证；浏览器自动更新不再影响凭证
 - 应用数据存在 localStorage，清除浏览器数据会丢失所有配置
 
 ---
@@ -718,6 +722,7 @@ Mock 数据包含：
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-04-28 | 修复 PII 脱敏区显示乱码：①指纹移除 navigator.userAgent（浏览器更新不再导致解密失败）；②解密失败返回空字符串而非 base64 密文（防止双重加密永久损坏数据）；③新增 looksLikeCiphertext 双重加密检测；④新增 migrateCredential 旧指纹兼容迁移；⑤ restoreState 自动迁移所有凭证 | src/state.js, src/main.js, DESIGN.md | - |
 | 2026-04-27 | OpenRouter Anthropic 缓存修复：添加 `anthropic-beta: prompt-caching-2024-07-31` 请求头和 `extra_body.stream_options` 配置；新增 `test-openai-compat.mjs` 单元测试验证缓存请求体结构（18 个测试用例全部通过） | server/services/openai-compat.js, test-openai-compat.mjs, DESIGN.md | - |
 | 2026-04-27 | TC1-TC7 本地预处理测试修复：① shouldKeepFile 检查顺序调整（正向文件名检查先于 jdScore>=2）；② jdScore>=2 过滤增加 careerScore<2 条件（避免混合内容文件整文件丢弃）；③ isRelevantCareerParagraph 中 jdScore>careerScore 改为 jdScore>=careerScore（修正中文动作动词导致的 false career 信号）；④ classifyLine 增加独立 boilerplate 词识别（Confidential/DRAFT 归为 noise）；⑤ POSITIVE_FILE_NAME_PATTERNS 中 \bresume\b 改为 resume（修复下划线作为词边界问题）；⑥ TC2/TC4 测试数据优化 | server/services/libraryCache.js, test-e2e.mjs | - |
 | 2026-04-25 | 本地预处理优化：精确文件名白名单、增强 JD 段落过滤、boilerplate 过滤增强、段落分割优化、缓存版本升级、完整测试用例 | server/services/libraryCache.js, test-e2e.mjs, DESIGN.md | - |

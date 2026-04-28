@@ -1,14 +1,24 @@
 /**
- * Unit Tests for OpenAI-Compatible API Caching Behavior
- * =====================================================
+ * Unit Tests for OpenAI-Compatible API Caching Behavior & State.js Encryption
+ * ==========================================================================
  *
+ * Part 1 — OpenAI-Compatible Caching Behavior
  * Tests verify that:
  * 1. Anthropic models via OpenRouter receive the correct caching headers
  * 2. Non-Anthropic models do NOT receive caching headers
  * 3. The cache_control structure is correctly applied to messages
  * 4. The extra_body stream_options is correctly set for Anthropic
  *
- * These tests mock fetch() to verify request construction without calling real APIs.
+ * Part 2 — State.js Encryption / Decryption / Migration
+ * Tests verify that:
+ * 1. AES-GCM encrypt/decrypt roundtrip works correctly
+ * 2. Decryption failure returns empty string (not raw ciphertext)
+ * 3. looksLikeCiphertext heuristic prevents double-encryption
+ * 4. Legacy fingerprint migration works and is idempotent
+ * 5. Stable fingerprint resists browser userAgent changes
+ *
+ * These tests mock fetch() and browser globals to verify behavior
+ * without calling real APIs or requiring a browser environment.
  */
 
 import { fileURLToPath } from 'url';
@@ -16,6 +26,29 @@ import path from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ── Polyfills for state.js tests (Web Crypto, TextEncoder/Decoder, localStorage, browser globals) ──
+import { webcrypto } from 'node:crypto';
+import { TextEncoder as NodeTextEncoder, TextDecoder as NodeTextDecoder } from 'node:util';
+
+if (!globalThis.crypto?.subtle) {
+  globalThis.crypto = webcrypto;
+}
+if (!globalThis.TextEncoder) globalThis.TextEncoder = NodeTextEncoder;
+if (!globalThis.TextDecoder) globalThis.TextDecoder = NodeTextDecoder;
+
+const stateStore = new Map();
+globalThis.localStorage = {
+  getItem: (k) => stateStore.has(k) ? stateStore.get(k) : null,
+  setItem: (k, v) => stateStore.set(k, v),
+  removeItem: (k) => stateStore.delete(k),
+  clear: () => stateStore.clear(),
+};
+
+Object.defineProperty(globalThis, 'screen', { value: { width: 1440, height: 900 }, writable: true, configurable: true });
+Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) TestBrowser/123.0' }, writable: true, configurable: true });
+
+// ── Shared test harness ──────────────────────────────────────────────────────
 
 const RESULTS = [];
 
@@ -30,6 +63,10 @@ function delay(ms) {
 }
 
 const BASE = process.env.TEST_BASE || 'http://localhost:3001/api';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Part 1: OpenAI-Compatible Caching Behavior Tests
+// ═══════════════════════════════════════════════════════════════════════════════
 
 let originalFetch = globalThis.fetch;
 let interceptedRequests = [];
@@ -319,10 +356,193 @@ async function testConnectionIdAnthropicDetection() {
   return hasAnthropicBeta;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Part 2: State.js Encryption / Decryption / Migration Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const state = await import('./src/state.js');
+
+function clearStateStore() {
+  stateStore.clear();
+}
+
+/**
+ * Simulate data encrypted with the legacy fingerprint (including userAgent).
+ * We temporarily change navigator.userAgent, encrypt, then restore.
+ */
+async function encryptWithLegacyFingerprint(key, value) {
+  const originalUA = globalThis.navigator.userAgent;
+  globalThis.navigator = { language: 'zh-CN', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) OldBrowser/100.0' };
+  await state.setCredential(key, value);
+  const raw = stateStore.get('resumeTailorApp');
+  const parsed = JSON.parse(raw);
+  const encrypted = parsed[key];
+  globalThis.navigator = { language: 'zh-CN', userAgent: originalUA };
+  return encrypted;
+}
+
+async function testStateEncryptDecryptRoundtrip() {
+  console.log('\n[Test Group] State: Basic encrypt/decrypt roundtrip');
+  clearStateStore();
+
+  await state.setCredential('test_key', 'hello world');
+  const result = await state.getCredential('test_key');
+  log('roundtrip: set then get returns original value', result === 'hello world', `got: "${result}"`);
+
+  await state.setCredential('test_empty', '');
+  const empty = await state.getCredential('test_empty');
+  log('roundtrip: empty string stays empty', empty === '', `got: "${empty}"`);
+}
+
+async function testStateDecryptEmptyOrMissing() {
+  console.log('\n[Test Group] State: Decrypt empty / missing keys');
+  clearStateStore();
+
+  const missing = await state.getCredential('nonexistent_key');
+  log('missing key returns empty string', missing === '', `got: "${missing}"`);
+
+  const s = state.loadState();
+  s['test_blank'] = '';
+  state.saveState(s);
+  const blank = await state.getCredential('test_blank');
+  log('empty string value returns empty string', blank === '', `got: "${blank}"`);
+}
+
+async function testStateDecryptFailureReturnsEmpty() {
+  console.log('\n[Test Group] State: Decryption failure protection');
+  clearStateStore();
+
+  const s = state.loadState();
+  s['test_garbage'] = 'PfDUWIqHhWubnmZBhFxDQ68ckoxRHyBt6YNAANIN6I5Fgg==';
+  state.saveState(s);
+
+  const result = await state.getCredential('test_garbage');
+  log('garbage ciphertext (>=24 chars, valid base64) returns empty string', result === '', `got: "${result}"`);
+
+  s['test_short_garbage'] = 'AAAAAA==';
+  state.saveState(s);
+  const shortResult = await state.getCredential('test_short_garbage');
+  log('short garbage (< 24 chars) returned as-is (treated as old plain text)', shortResult === 'AAAAAA==', `got: "${shortResult}"`);
+}
+
+async function testStateLooksLikeCiphertext() {
+  console.log('\n[Test Group] State: looksLikeCiphertext heuristic (via setCredential guard)');
+
+  clearStateStore();
+  await state.setCredential('test_ciphertext_input', 'PfDUWIqHhWubnmZBhFxDQ68ckoxRHyBt6YNAANIN6I5Fgg==');
+  const result = await state.getCredential('test_ciphertext_input');
+  log('setCredential rejects base64 ciphertext → stores empty', result === '', `got: "${result}"`);
+
+  clearStateStore();
+  await state.setCredential('test_normal', 'hello world');
+  const normal = await state.getCredential('test_normal');
+  log('setCredential accepts normal string', normal === 'hello world', `got: "${normal}"`);
+
+  clearStateStore();
+  await state.setCredential('test_short_b64', 'YWJj');
+  const shortB64 = await state.getCredential('test_short_b64');
+  log('setCredential accepts short base64 (< 24 chars)', shortB64 === 'YWJj', `got: "${shortB64}"`);
+
+  clearStateStore();
+  await state.setCredential('test_email', 'user@example.com');
+  const email = await state.getCredential('test_email');
+  log('setCredential accepts email address', email === 'user@example.com', `got: "${email}"`);
+
+  clearStateStore();
+  await state.setCredential('test_phone', '13501168055');
+  const phone = await state.getCredential('test_phone');
+  log('setCredential accepts phone number', phone === '13501168055', `got: "${phone}"`);
+
+  clearStateStore();
+  await state.setCredential('test_name_zh', '吴坤');
+  const nameZh = await state.getCredential('test_name_zh');
+  log('setCredential accepts Chinese name', nameZh === '吴坤', `got: "${nameZh}"`);
+}
+
+async function testStateLegacyFingerprintMigration() {
+  console.log('\n[Test Group] State: Legacy fingerprint migration (migrateCredential)');
+  clearStateStore();
+
+  const encrypted = await encryptWithLegacyFingerprint('test_migrate', 'my-secret-value');
+  log('legacy encryption produced ciphertext', encrypted.length > 0, `len=${encrypted.length}`);
+
+  await state.migrateCredential('test_migrate');
+
+  const afterMigration = await state.getCredential('test_migrate');
+  log('migrated credential is readable with stable fingerprint', afterMigration === 'my-secret-value', `got: "${afterMigration}"`);
+
+  await state.migrateCredential('test_migrate');
+  const afterDoubleMigration = await state.getCredential('test_migrate');
+  log('re-migration is no-op (value unchanged)', afterDoubleMigration === 'my-secret-value', `got: "${afterDoubleMigration}"`);
+}
+
+async function testStateMigrationClearsDoubleEncrypted() {
+  console.log('\n[Test Group] State: Migration clears double-encrypted (corrupted) data');
+  clearStateStore();
+
+  await state.setCredential('test_double', 'original-value');
+  const raw1 = state.loadState()['test_double'];
+
+  await state.setCredential('test_double', raw1);
+  const result = await state.getCredential('test_double');
+  log('setCredential with ciphertext value stores empty', result === '', `got: "${result}"`);
+
+  clearStateStore();
+  const fakeCiphertext = 'PfDUWIqHhWubnmZBhFxDQ68ckoxRHyBt6YNAANIN6I5Fgg==';
+  await encryptWithLegacyFingerprint('test_corrupt', fakeCiphertext);
+  await state.migrateCredential('test_corrupt');
+  const corrupted = await state.getCredential('test_corrupt');
+  log('migrateCredential clears data whose plaintext looks like ciphertext', corrupted === '', `got: "${corrupted}"`);
+}
+
+async function testStateStableFingerprintResistsBrowserUpdate() {
+  console.log('\n[Test Group] State: Stable fingerprint resists browser update');
+  clearStateStore();
+
+  await state.setCredential('test_stable', 'persistent-value');
+  const before = await state.getCredential('test_stable');
+  log('value readable before UA change', before === 'persistent-value', `got: "${before}"`);
+
+  const originalUA = globalThis.navigator.userAgent;
+  globalThis.navigator = { language: 'zh-CN', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) NewBrowser/200.0' };
+
+  const after = await state.getCredential('test_stable');
+  log('value still readable after UA change (stable fingerprint)', after === 'persistent-value', `got: "${after}"`);
+
+  globalThis.navigator = { language: 'zh-CN', userAgent: originalUA };
+}
+
+async function testStateNonCredentialDataUnaffected() {
+  console.log('\n[Test Group] State: Non-credential state operations unaffected');
+  clearStateStore();
+
+  state.set('libraryPath', '/Users/test');
+  const lib = state.get('libraryPath');
+  log('state.get/set works for non-credential data', lib === '/Users/test', `got: "${lib}"`);
+
+  const defaultVal = state.get('nonexistent', 'default');
+  log('state.get returns default for missing key', defaultVal === 'default', `got: "${defaultVal}"`);
+}
+
+async function testStateIsCredentialKey() {
+  console.log('\n[Test Group] State: isCredentialKey classification');
+  log('connKey_ prefix is credential', state.isCredentialKey('connKey_jiekou-openai'));
+  log('pii_ prefix is credential', state.isCredentialKey('pii_nameEn'));
+  log('old-style geminiKey is credential', state.isCredentialKey('geminiKey'));
+  log('connUrl_ prefix is NOT credential', !state.isCredentialKey('connUrl_jiekou-openai'));
+  log('random key is NOT credential', !state.isCredentialKey('libraryPath'));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Main
+// ═══════════════════════════════════════════════════════════════════════════════
+
 async function runTests() {
-  console.log('=== OpenAI-Compatible Caching Behavior Tests ===\n');
+  console.log('=== Unit Tests: OpenAI-Compatible Caching & State.js Encryption ===\n');
 
   try {
+    // ── Part 1: OpenAI-Compatible Caching ──
+    console.log('--- Part 1: OpenAI-Compatible Caching Behavior ---');
     await testAnthropicCachingHeaders();
     await delay(100);
 
@@ -339,6 +559,19 @@ async function runTests() {
     await delay(100);
 
     await testConnectionIdAnthropicDetection();
+
+    // ── Part 2: State.js Encryption ──
+    console.log('\n--- Part 2: State.js Encryption / Decryption / Migration ---');
+    await testStateEncryptDecryptRoundtrip();
+    await testStateDecryptEmptyOrMissing();
+    await testStateDecryptFailureReturnsEmpty();
+    await testStateLooksLikeCiphertext();
+    await testStateLegacyFingerprintMigration();
+    await testStateMigrationClearsDoubleEncrypted();
+    await testStateStableFingerprintResistsBrowserUpdate();
+    await testStateNonCredentialDataUnaffected();
+    await testStateIsCredentialKey();
+
   } catch (err) {
     console.error('\nTest Error:', err.message);
     RESULTS.push({ test: 'Test Error', pass: false, detail: err.message });
