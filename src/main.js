@@ -59,6 +59,9 @@ const els = {
   // Agent assignment dropdowns
   cfgAgentOrchestrator: $('cfgAgentOrchestrator'), cfgAgentGenerator: $('cfgAgentGenerator'),
   cfgAgentReviewers: $('cfgAgentReviewers'), cfgAgentHtml: $('cfgAgentHtml'), cfgAgentPreprocessor: $('cfgAgentPreprocessor'),
+  // Reasoning intensity dropdowns
+  cfgReasoningOrchestrator: $('cfgReasoningOrchestrator'), cfgReasoningGenerator: $('cfgReasoningGenerator'),
+  cfgReasoningReviewer: $('cfgReasoningReviewer'),
   jdInput: $('jdInput'), libraryPath: $('libraryPath'), browseLibraryBtn: $('browseLibraryBtn'), loadLibraryBtn: $('loadLibraryBtn'), exportDigestBtn: $('exportDigestBtn'), exportDigestStatus: $('exportDigestStatus'), baseResumeSelect: $('baseResumeSelect'),
   // AI Preprocessing
   useAiPreprocess: $('useAiPreprocess'),
@@ -521,6 +524,16 @@ function requireConfiguredConnection(connectionId, roleLabel) {
   throw new Error(`${roleLabel} 模型连接未配置，请先在"设置"中填写 API Key 并保存`);
 }
 
+function getReasoningForAgent(agentRole) {
+  const map = {
+    generator: 'cfgReasoningGenerator',
+    orchestrator: 'cfgReasoningOrchestrator',
+    reviewer: 'cfgReasoningReviewer',
+  };
+  const el = map[agentRole] ? els[map[agentRole]] : null;
+  return el?.value || 'none';
+}
+
 /* ── Token & Cost Utilities ── */
 function formatUsage(usage, model) {
   if (!usage) return '';
@@ -936,6 +949,10 @@ async function restoreState() {
 
 function restoreAgentAssignments() {
   applyResolvedAgentSelections();
+  // Restore reasoning intensity dropdowns
+  if (els.cfgReasoningOrchestrator) els.cfgReasoningOrchestrator.value = state.get('reasoningOrchestrator', 'none');
+  if (els.cfgReasoningGenerator) els.cfgReasoningGenerator.value = state.get('reasoningGenerator', 'none');
+  if (els.cfgReasoningReviewer) els.cfgReasoningReviewer.value = state.get('reasoningReviewer', 'none');
 }
 
 function persistInputs() {
@@ -1213,6 +1230,11 @@ async function saveSettings() {
   state.set('reviewerModels', assignments.reviewerModels);
   state.set('htmlModel', assignments.htmlModel);
   state.set('preprocessorModel', assignments.preprocessorModel);
+
+  // Save reasoning intensity settings
+  state.set('reasoningOrchestrator', els.cfgReasoningOrchestrator?.value || 'none');
+  state.set('reasoningGenerator', els.cfgReasoningGenerator?.value || 'none');
+  state.set('reasoningReviewer', els.cfgReasoningReviewer?.value || 'none');
 
   // Save PII config (encrypted)
   state.set('piiEnabled', els.cfgPiiEnabled.checked);
@@ -1977,6 +1999,7 @@ async function doGenerate() {
       instructions: els.genInstructions.value,
       generateCoverLetter: els.generateCoverLetter.checked,
       previouslySubmitted,
+      reasoning: getReasoningForAgent('generator'),
     }, (chunk, full) => {
       // During streaming, show full raw output
       els.resumeOutput.value = full;
@@ -2129,6 +2152,7 @@ async function doReview() {
         ...reviewPayload,
         models: reviewerModels,
         orchestratorModel: requireConfiguredConnection(getReviewCoordinatorModelId(), 'Reviewer'),
+        reasoning: getReasoningForAgent('reviewer'),
       }, (chunk, full) => {
         els.reviewOutput.value = full;
         els.reviewOutput.scrollTop = els.reviewOutput.scrollHeight;
@@ -2139,6 +2163,7 @@ async function doReview() {
       result = await api.streamRequest('/api/review', {
         ...reviewPayload,
         model: reviewerModels[0],
+        reasoning: getReasoningForAgent('reviewer'),
       }, (chunk, full) => {
         els.reviewOutput.value = full;
         els.reviewOutput.scrollTop = els.reviewOutput.scrollHeight;
@@ -2341,6 +2366,7 @@ async function doApplyReview() {
         generateCoverLetter: els.generateCoverLetter.checked,
         previouslySubmitted,
         generateNotes: false,
+        reasoning: getReasoningForAgent('generator'),
       }, (chunk, full) => {
         els.resumeOutput.value = full;
         els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;
@@ -2402,6 +2428,7 @@ async function doGenChat() {
       model, mock: els.mockMode.checked,
       messages: truncateHistory(genChatMessages),
       chatType: 'generator',
+      reasoning: getReasoningForAgent('generator'),
     }, (chunk, full) => {
       aiDiv.classList.remove('loading');
       aiDiv.textContent = full;
@@ -2467,6 +2494,7 @@ async function doChat() {
       model, mock: els.mockMode.checked,
       messages: truncateHistory(chatMessages),
       chatType: 'review',
+      reasoning: getReasoningForAgent('reviewer'),
     }, (chunk, full) => {
       aiDiv.classList.remove('loading');
       aiDiv.textContent = full;

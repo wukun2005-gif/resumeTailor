@@ -142,14 +142,35 @@
           <div class="form-row">
             <label>Orchestrator（负责JD解析及合并审核的协调调度）</label>
             <select id="cfgAgentOrchestrator"></select>
+            <label class="reasoning-label">推理强度</label>
+            <select id="cfgReasoningOrchestrator" class="reasoning-select">
+              <option value="none">无</option>
+              <option value="low">低</option>
+              <option value="medium">中</option>
+              <option value="high">高</option>
+            </select>
           </div>
           <div class="form-row">
             <label>Generator（简历/求职信生成）</label>
             <select id="cfgAgentGenerator"></select>
+            <label class="reasoning-label">推理强度</label>
+            <select id="cfgReasoningGenerator" class="reasoning-select">
+              <option value="none">无</option>
+              <option value="low">低</option>
+              <option value="medium">中</option>
+              <option value="high">高</option>
+            </select>
           </div>
           <div class="form-row">
             <label>Reviewer（评审，可多选）</label>
             <div id="cfgAgentReviewers" class="checkbox-group"></div>
+            <label class="reasoning-label">推理强度</label>
+            <select id="cfgReasoningReviewer" class="reasoning-select">
+              <option value="none">无</option>
+              <option value="low">低</option>
+              <option value="medium">中</option>
+              <option value="high">高</option>
+            </select>
           </div>
           <div class="form-row">
             <label>Format Converter（HTML转换 / 图片OCR兜底）</label>

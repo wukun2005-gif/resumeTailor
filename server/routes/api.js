@@ -32,6 +32,20 @@ function setupSSE(res) {
 }
 function sendSSE(res, data) { res.write(`data: ${JSON.stringify(data)}\n\n`); }
 
+/* ── Reasoning helpers ── */
+const VALID_REASONS = ['none', 'low', 'medium', 'high'];
+const NON_CREATIVE_ROUTES = ['/apply-review', '/generate-html', '/ocr-jd-images', '/extract-jd-info', '/preprocess-library'];
+
+/**
+ * Normalize reasoning field: valid values pass through, everything else → 'none'.
+ * Non-creative routes always force 'none'.
+ */
+function resolveReasoning(reasoning, routePath) {
+  const normalized = VALID_REASONS.includes(reasoning) ? reasoning : 'none';
+  if (NON_CREATIVE_ROUTES.includes(routePath)) return 'none';
+  return normalized;
+}
+
 /* ── Model connection registry ── */
 // Map of connectionId → { sdkType, label, key, url, model }
 const connectionRegistry = new Map();
@@ -312,12 +326,13 @@ router.post('/generate', async (req, res) => {
       sanitizeRequestBody(req.body, ['jd', 'baseResume', 'instructions', 'previouslySubmitted'], piiEntries);
       sanitizeLibrary(req.body.resumeLibrary, piiEntries);
     }
-    const { model, jd, baseResume, resumeLibrary, instructions, generateCoverLetter, previouslySubmitted, generateNotes } = req.body;
+    const { model, jd, baseResume, resumeLibrary, instructions, generateCoverLetter, previouslySubmitted, generateNotes, reasoning } = req.body;
     const caller = getModelCaller(model);
+    const resolvedReasoning = resolveReasoning(reasoning, '/generate');
     const { system, user, userBlocks } = getResumeGenerationPrompt({ jd, originalResume: baseResume, resumeLibrary, instructions, previouslySubmitted, generateCoverLetter, generateNotes });
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
-    const result = await caller(user, onChunk, { system, maxTokens: 8192, userBlocks });
+    const result = await caller(user, onChunk, { system, maxTokens: 8192, userBlocks, reasoning: resolvedReasoning });
     if (restorer) restorer.end();
     sendSSE(res, { type: 'done', usage: result.usage, model });
   } catch (err) {
@@ -338,12 +353,13 @@ router.post('/review', async (req, res) => {
       sanitizeRequestBody(req.body, ['jd', 'baseResume', 'updatedResume', 'instructions', 'previouslySubmitted'], piiEntries);
       sanitizeLibrary(req.body.resumeLibrary, piiEntries);
     }
-    const { model, jd, baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted } = req.body;
+    const { model, jd, baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted, reasoning } = req.body;
     const caller = getModelCaller(model);
+    const resolvedReasoning = resolveReasoning(reasoning, '/review');
     const { system, user, userBlocks } = getReviewPrompt({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted });
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
-    const result = await caller(user, onChunk, { system, maxTokens: 6144, userBlocks });
+    const result = await caller(user, onChunk, { system, maxTokens: 6144, userBlocks, reasoning: resolvedReasoning });
     if (restorer) restorer.end();
     sendSSE(res, { type: 'done', usage: result.usage, model });
   } catch (err) {
@@ -365,14 +381,15 @@ router.post('/review-multi', async (req, res) => {
       sanitizeRequestBody(req.body, ['jd', 'baseResume', 'updatedResume', 'instructions', 'previouslySubmitted'], piiEntries);
       sanitizeLibrary(req.body.resumeLibrary, piiEntries);
     }
-    const { models, orchestratorModel, jd, baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted } = req.body;
+    const { models, orchestratorModel, jd, baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted, reasoning } = req.body;
+    const resolvedReasoning = resolveReasoning(reasoning, '/review-multi');
     const { system, user, userBlocks } = getReviewPromptConcise({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted });
 
     // Run all reviewers in parallel (concise format, no SSE streaming for individual results)
     sendSSE(res, { type: 'chunk', text: '正在并行调用多个评审模型...\n\n' });
     const results = await Promise.all(models.map(async (model) => {
       const caller = getModelCaller(model);
-      const result = await caller(user, () => {}, { system, maxTokens: 3072, userBlocks });
+      const result = await caller(user, () => {}, { system, maxTokens: 3072, userBlocks, reasoning: resolvedReasoning });
       return { model, text: result.text, usage: result.usage };
     }));
 
@@ -425,7 +442,8 @@ router.post('/chat', async (req, res) => {
     if (piiEntries.length > 0) {
       sanitizeMessages(req.body.messages, piiEntries);
     }
-    const { model, messages, chatType } = req.body;
+    const { model, messages, chatType, reasoning } = req.body;
+    const resolvedReasoning = resolveReasoning(reasoning, '/chat');
     const chatConfigs = {
       review:    { maxTokens: 4096, system: '你是简历评审助手。回答简明扼要，不超过3段。不要重新生成整份简历。' },
       generator: { maxTokens: 4096, system: '你是简历修改助手。如果需要修改简历，只输出修改后的完整简历并用===== 简历正文 =====标记。简短问答不需要标记。' },
@@ -435,7 +453,7 @@ router.post('/chat', async (req, res) => {
     const caller = getModelCaller(model);
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
-    const result = await caller(null, onChunk, { messages, maxTokens: config.maxTokens, system: config.system });
+    const result = await caller(null, onChunk, { messages, maxTokens: config.maxTokens, system: config.system, reasoning: resolvedReasoning });
     if (restorer) restorer.end();
     sendSSE(res, { type: 'done', usage: result.usage, model });
   } catch (err) {

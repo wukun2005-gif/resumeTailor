@@ -440,6 +440,16 @@ export async function callGemini(prompt, onChunk, opts = {}) {
     if (opts.jsonMode) {
       config.responseMimeType = 'application/json';
     }
+    // Extended thinking (reasoning) support
+    const reasoningBudgetMap = { low: 2048, medium: 8192, high: 24576 };
+    if (opts.reasoning && reasoningBudgetMap[opts.reasoning]) {
+      const budget = reasoningBudgetMap[opts.reasoning];
+      config.thinkingConfig = { thinkingBudget: budget };
+      // Ensure maxOutputTokens is sufficient for thinking + output
+      if (config.maxOutputTokens <= budget) {
+        config.maxOutputTokens = budget + 4096;
+      }
+    }
     const reqParams = { model: currentModel, contents, config };
     if (opts.system) {
       reqParams.config.systemInstruction = opts.system;

@@ -94,6 +94,9 @@ vscCCOpus/
 │   │   └── libraryCache.js   # 素材库 digest 缓存系统
 │   └── prompts/
 │       └── templates.js      # 所有 LLM Prompt 模板
+├── config/                    # 运行时配置（.gitignore，不提交）
+│   └── user-models.json      # 用户级 Gemini fallback 模型列表（自动生成）
+├── test-e2e.mjs              # 综合测试套件（E2E + mock 单元测试）
 └── DESIGN.md                 # 本文档
 ```
 
@@ -240,6 +243,9 @@ data: {"type":"done"}
 | `reviewInstructions` | 评审简历的 prompt 指令 | 否 |
 | `htmlInstructions` | HTML 转换的 prompt 指令 | 否 |
 | `mockMode` | 仿真模式开关 | 否 |
+| `reasoningOrchestrator` | Orchestrator 推理强度 | 否 |
+| `reasoningGenerator` | Generator 推理强度 | 否 |
+| `reasoningReviewer` | Reviewer 推理强度 | 否 |
 
 ### 6.3 工作区内容默认不持久化
 
@@ -621,6 +627,59 @@ Mock 数据包含：
 
 ---
 
+## 17.5 推理强度（Extended Thinking）
+
+### 17.5.1 功能概述
+
+每个创作类 Agent（Generator、Reviewer、Orchestrator）可独立配置推理强度，控制 AI 模型的"深度思考"行为。非创作类 Agent（Apply-Review、Format Converter、Preprocessor）自动跳过推理，无需配置。
+
+### 17.5.2 前端 UI
+
+- Agent 模型分配区每个创作类 Agent 行右侧有"推理强度"下拉
+- 选项：无 / 低 / 中 / 高，默认"无"
+- Format Converter 和 Preprocessor 无推理下拉（后端自动跳过）
+- 推理设置随 Agent 分配一起保存到 localStorage，刷新后恢复
+
+### 17.5.3 参数映射
+
+| 强度 | Anthropic `budget_tokens` | Gemini `thinkingBudget` | OpenAI-compat |
+|------|--------------------------|------------------------|---------------|
+| 无 | 不启用 | 不启用 | 不传 |
+| 低 | 2048 | 2048 | `reasoning_effort: "low"` |
+| 中 | 8192 | 8192 | `reasoning_effort: "medium"` |
+| 高 | 32768 | 24576 | `reasoning_effort: "high"` |
+
+- Anthropic 启用 thinking 时，自动确保 `max_tokens > budget_tokens`（API 硬性要求）
+- Gemini 启用 thinkingConfig 时，自动确保 `maxOutputTokens > thinkingBudget`
+- OpenAI-compat 直接传 `reasoning_effort`，不做额外处理
+- 非法值（如 `"extreme"`）视为 `none`，静默跳过
+
+### 17.5.4 后端路由行为
+
+**创作类路由**（传递 reasoning）：
+| 路由 | 说明 |
+|------|------|
+| `/generate` | 从请求体读取 `reasoning`，传给 caller |
+| `/review` | 同上 |
+| `/review-multi` | 同上（审阅和合并均使用） |
+| `/chat` | 同上 |
+
+**非创作类路由**（强制 `reasoning='none'`）：
+| 路由 | 说明 |
+|------|------|
+| `/apply-review` | diff 格式化任务，无需深度推理 |
+| `/generate-html` | HTML 排版任务，无需深度推理 |
+| `/ocr-jd-images` | OCR 识别任务，无需深度推理 |
+| `/extract-jd-info` | JD 信息提取，无需深度推理 |
+| `/preprocess-library` | 素材预处理，无需深度推理 |
+
+### 17.5.5 向后兼容
+
+- `reasoning` 字段缺失时默认 `'none'`，行为与之前完全一致
+- 三个 SDK 均只在 `reasoning` 为合法值（`low`/`medium`/`high`）时启用思考参数
+
+---
+
 ## 18. 开发指南
 
 ### 回归测试要求
@@ -722,6 +781,8 @@ Mock 数据包含：
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-04-28 | 推理强度（Extended Thinking）功能：①前端 Agent 区新增推理强度下拉（无/低/中/高），每个创作类 Agent 独立配置；②后端三个 SDK 支持 reasoning 参数（Anthropic thinking、Gemini thinkingConfig、OpenAI-compat reasoning_effort）；③非创作类路由强制覆盖为 none；④新增 13 个推理强度测试用例 | index.html, src/main.js, src/style.css, server/routes/api.js, server/services/anthropic.js, server/services/gemini.js, server/services/openai-compat.js, test-e2e.mjs, DESIGN.md | - |
+| 2026-04-28 | 测试文件合并：将 `test-openai-compat.mjs`（OpenAI-Compat 缓存行为 + State.js 加密测试）迁移到 `test-e2e.mjs`，删除原文件；新增【OpenAI-Compat缓存测试】和【State.js加密测试】两个测试分组；修复 `/apply-review` regex 匹配问题（`>>>>`→`>>>`） | test-e2e.mjs, test-openai-compat.mjs(删除), DESIGN.md | - |
 | 2026-04-28 | 修复 PII 脱敏区显示乱码：①指纹移除 navigator.userAgent（浏览器更新不再导致解密失败）；②解密失败返回空字符串而非 base64 密文（防止双重加密永久损坏数据）；③新增 looksLikeCiphertext 双重加密检测；④新增 migrateCredential 旧指纹兼容迁移；⑤ restoreState 自动迁移所有凭证 | src/state.js, src/main.js, DESIGN.md | - |
 | 2026-04-27 | OpenRouter Anthropic 缓存修复：添加 `anthropic-beta: prompt-caching-2024-07-31` 请求头和 `extra_body.stream_options` 配置；新增 `test-openai-compat.mjs` 单元测试验证缓存请求体结构（18 个测试用例全部通过） | server/services/openai-compat.js, test-openai-compat.mjs, DESIGN.md | - |
 | 2026-04-27 | TC1-TC7 本地预处理测试修复：① shouldKeepFile 检查顺序调整（正向文件名检查先于 jdScore>=2）；② jdScore>=2 过滤增加 careerScore<2 条件（避免混合内容文件整文件丢弃）；③ isRelevantCareerParagraph 中 jdScore>careerScore 改为 jdScore>=careerScore（修正中文动作动词导致的 false career 信号）；④ classifyLine 增加独立 boilerplate 词识别（Confidential/DRAFT 归为 noise）；⑤ POSITIVE_FILE_NAME_PATTERNS 中 \bresume\b 改为 resume（修复下划线作为词边界问题）；⑥ TC2/TC4 测试数据优化 | server/services/libraryCache.js, test-e2e.mjs | - |
@@ -763,7 +824,7 @@ GEMINI_KEY=xxx    # Google AI Studio API Key，用于 E2E 测试
 
 ### 21.2 测试运行机制
 
-**测试文件**：`test-e2e.mjs`
+**测试文件**：`test-e2e.mjs`（唯一测试文件，包含 E2E 回归测试 + mock 单元测试）
 
 **运行方式**：
 ```bash

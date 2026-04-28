@@ -3,3 +3,5 @@ node_modules/
 .env
 dist/
 .codebuddy/
+DEV_PRINCIPLES.md
+config/user-models.json

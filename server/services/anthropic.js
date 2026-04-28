@@ -63,6 +63,17 @@ export async function callAnthropic(prompt, onChunk, opts = {}) {
     ];
   }
 
+  // Extended thinking (reasoning) support
+  const budgetMap = { low: 2048, medium: 8192, high: 32768 };
+  if (opts.reasoning && budgetMap[opts.reasoning]) {
+    const budget = budgetMap[opts.reasoning];
+    params.thinking = { type: 'enabled', budget_tokens: budget };
+    // Anthropic requires max_tokens > budget_tokens when thinking is enabled
+    if (params.max_tokens <= budget) {
+      params.max_tokens = budget + 4096;
+    }
+  }
+
   const stream = client.messages.stream(params);
   let fullText = '';
   let usage = { input: 0, output: 0 };

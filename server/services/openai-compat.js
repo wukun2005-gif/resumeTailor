@@ -85,6 +85,11 @@ export async function callOpenAICompat(connectionId, prompt, onChunk, opts = {})
     stream: true,
     ...(opts.jsonMode && { response_format: { type: 'json_object' } }),
   };
+  // Extended thinking (reasoning) support for OpenAI-compatible endpoints
+  const validReasoning = ['low', 'medium', 'high'];
+  if (opts.reasoning && validReasoning.includes(opts.reasoning)) {
+    body.reasoning_effort = opts.reasoning;
+  }
   if (isAnthropic) {
     body.extra_body = {
       stream_options: { include_usage: true },
