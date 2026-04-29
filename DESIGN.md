@@ -782,6 +782,7 @@ Mock 数据包含：
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-04-29 | 流式操作期间禁止重复操作：①新增 lockAllButtons/unlockAllButtons 集中管理函数；②流式期间禁用所有主操作按钮（生成/重新生成/Review/采纳更新/生成HTML/保存）、对话发送按钮、素材库操作按钮；③复用 sessionTotalInfo 显示"AI 正在处理，请稍候..."蓝色提示；④所有流式操作在 finally 块统一调用 unlockAllButtons 恢复状态 | src/main.js, DESIGN.md | - |
 | 2026-04-28 | 推理强度（Extended Thinking）功能：①前端 Agent 区新增推理强度下拉（无/低/中/高），每个创作类 Agent 独立配置；②后端三个 SDK 支持 reasoning 参数（Anthropic thinking、Gemini thinkingConfig、OpenAI-compat reasoning_effort）；③非创作类路由强制覆盖为 none；④新增 13 个推理强度测试用例 | index.html, src/main.js, src/style.css, server/routes/api.js, server/services/anthropic.js, server/services/gemini.js, server/services/openai-compat.js, test-e2e.mjs, DESIGN.md | - |
 | 2026-04-28 | 测试文件合并：将 `test-openai-compat.mjs`（OpenAI-Compat 缓存行为 + State.js 加密测试）迁移到 `test-e2e.mjs`，删除原文件；新增【OpenAI-Compat缓存测试】和【State.js加密测试】两个测试分组；修复 `/apply-review` regex 匹配问题（`>>>>`→`>>>`） | test-e2e.mjs, test-openai-compat.mjs(删除), DESIGN.md | - |
 | 2026-04-28 | 修复 JD AI OCR 上下文缓存泄漏 Bug：Google Gemini API 在同一 API Key 下维护服务端上下文缓存，导致新 OCR 请求返回历史残留内容。修复方案：①添加 system prompt 语义隔离（声明每次请求独立、禁止回忆历史）；②在 user prompt 前添加唯一 Request-ID 打破缓存关联；③temperature 从 0.1 降为 0。经测试确认修复有效，连续多次 OCR 同一图片均无残留 | server/routes/api.js, DESIGN.md | - |

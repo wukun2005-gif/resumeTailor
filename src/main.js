@@ -103,6 +103,7 @@ let baseResumeContent = '';
 let resumeLibraryContents = [];
 let chatMessages = [];
 let isStreaming = false;
+let savedSessionTotalText = ''; // 保存流式期间被覆盖的session total信息
 let jdInfo = null; // cached JD extraction result
 let genChatMessages = []; // Generator chat context
 let htmlChatMessages = []; // HTML chat context
@@ -1134,8 +1135,7 @@ async function doPreprocessChat() {
   appendPreprocessChatBubble('user', msg);
   els.preprocessChatInput.value = '';
 
-  isStreaming = true;
-  els.preprocessChatSendBtn.disabled = true;
+  lockAllButtons();
   const aiDiv = appendPreprocessChatBubble('ai', '思考中...');
   aiDiv.classList.add('loading');
 
@@ -1158,9 +1158,9 @@ async function doPreprocessChat() {
     }
   } catch (e) {
     aiDiv.textContent = '错误: ' + e.message;
+  } finally {
+    unlockAllButtons();
   }
-  isStreaming = false;
-  els.preprocessChatSendBtn.disabled = false;
 }
 
 function appendPreprocessChatBubble(role, text) {
@@ -1181,14 +1181,75 @@ function onResumeEdited() {
   updateGenerateBtn();
 }
 
+/**
+ * 锁定所有操作按钮并显示全局处理提示
+ */
+function lockAllButtons() {
+  isStreaming = true;
+  
+  // 禁用所有主操作按钮
+  els.generateBtn.disabled = true;
+  els.regenerateBtn.disabled = true;
+  els.reviewBtn.disabled = true;
+  els.applyReviewBtn.disabled = true;
+  els.generateHtmlBtn.disabled = true;
+  els.saveResumeBtn.disabled = true;
+  
+  // 禁用所有对话发送按钮
+  els.genChatSendBtn.disabled = true;
+  els.chatSendBtn.disabled = true;
+  els.htmlChatSendBtn.disabled = true;
+  if (els.preprocessChatSendBtn) els.preprocessChatSendBtn.disabled = true;
+  
+  // 禁用其他操作按钮
+  els.loadLibraryBtn.disabled = true;
+  els.exportDigestBtn.disabled = true;
+  
+  // 保存并覆盖session total信息
+  if (els.sessionTotalInfo) {
+    savedSessionTotalText = els.sessionTotalInfo.textContent;
+    els.sessionTotalInfo.textContent = 'AI 正在处理，请稍候...';
+    els.sessionTotalInfo.style.color = '#1976d2'; // 蓝色
+  }
+}
+
+/**
+ * 解锁所有操作按钮并恢复状态提示
+ */
+function unlockAllButtons() {
+  isStreaming = false;
+  
+  // 恢复session total信息
+  if (els.sessionTotalInfo) {
+    els.sessionTotalInfo.textContent = savedSessionTotalText;
+    els.sessionTotalInfo.style.color = '#666'; // 恢复原色
+  }
+  
+  // 调用updateGenerateBtn恢复按钮状态
+  updateGenerateBtn();
+  
+  // 恢复对话发送按钮（这些不依赖其他条件）
+  els.genChatSendBtn.disabled = false;
+  els.chatSendBtn.disabled = false;
+  els.htmlChatSendBtn.disabled = false;
+  if (els.preprocessChatSendBtn) els.preprocessChatSendBtn.disabled = false;
+  
+  // 恢复其他操作按钮
+  els.loadLibraryBtn.disabled = false;
+  // exportDigestBtn的状态由素材库是否加载决定，在loadLibrary中设置
+}
+
 function updateGenerateBtn() {
   const hasJD = getNormalizedJdText().length > 0;
   const hasGenerator = !!getGeneratorModelId();
   const hasHtml = !!getHtmlModelId();
   const hasReviewer = getReviewerModelIds().length > 0;
   els.generateBtn.disabled = !hasJD || isStreaming || (!els.mockMode.checked && !hasGenerator);
+  els.regenerateBtn.disabled = isStreaming;
   els.generateHtmlBtn.disabled = !els.resumeOutput.value.trim() || isStreaming || (!els.mockMode.checked && !hasHtml);
   els.reviewBtn.disabled = !els.resumeOutput.value.trim() || isStreaming || (!els.mockMode.checked && !hasReviewer);
+  els.applyReviewBtn.disabled = isStreaming || !els.reviewOutput.value.trim();
+  els.saveResumeBtn.disabled = isStreaming || !els.resumeOutput.value.trim();
 }
 
 /* ── Browse folder (Chrome File System Access API) ── */
@@ -1954,8 +2015,7 @@ async function doGenerate() {
   const resume = baseResumeContent || els.manualResumeInput.value.trim();
   if (!resume) return alert('请选择或输入基础简历');
 
-  isStreaming = true;
-  els.generateBtn.disabled = true;
+  lockAllButtons();
   els.resumeOutput.value = '';
   els.resumeStatusAndToken.textContent = '生成中...';
   chatMessages = [];
@@ -2045,9 +2105,9 @@ async function doGenerate() {
   } catch (e) {
     els.resumeStatusAndToken.textContent = '生成失败: ' + e.message;
     persistDraftState(true);
+  } finally {
+    unlockAllButtons();
   }
-  isStreaming = false;
-  updateGenerateBtn();
 }
 
 /* ── Auto-save generated resume to library ── */
@@ -2107,9 +2167,7 @@ async function doReview() {
   const resume = els.resumeOutput.value.trim();
   if (!resume) return alert('请先生成简历');
 
-  isStreaming = true;
-  els.reviewBtn.disabled = true;
-  els.applyReviewBtn.disabled = true;
+  lockAllButtons();
   els.reviewOutput.value = '';
   els.reviewStatusAndToken.textContent = 'Review 中...';
   persistDraftState(true);
@@ -2192,9 +2250,9 @@ async function doReview() {
   } catch (e) {
     els.reviewStatusAndToken.textContent = 'Review 失败: ' + e.message;
     persistDraftState(true);
+  } finally {
+    unlockAllButtons();
   }
-  isStreaming = false;
-  els.reviewBtn.disabled = false;
 }
 
 /* ── Apply Review: diff mode with fallback ── */
@@ -2283,8 +2341,7 @@ async function doApplyReview() {
   const currentResume = els.resumeOutput.value.trim();
   if (!reviewComments || !currentResume) return alert('请先完成Review');
 
-  isStreaming = true;
-  els.applyReviewBtn.disabled = true;
+  lockAllButtons();
   els.resumeOutput.value = '';
   els.resumeStatusAndToken.textContent = '根据Review意见更新简历中（diff模式）...';
   persistDraftState(true);
@@ -2402,10 +2459,9 @@ async function doApplyReview() {
   } catch (e) {
     els.resumeStatusAndToken.textContent = '更新失败: ' + e.message;
     persistDraftState(true);
+  } finally {
+    unlockAllButtons();
   }
-  isStreaming = false;
-  els.applyReviewBtn.disabled = false;
-  updateGenerateBtn();
 }
 
 /* ── Generator Chat ── */
@@ -2417,8 +2473,7 @@ async function doGenChat() {
   appendGenChatBubble('user', msg);
   els.genChatInput.value = '';
 
-  isStreaming = true;
-  els.genChatSendBtn.disabled = true;
+  lockAllButtons();
   const aiDiv = appendGenChatBubble('ai', '思考中...');
   aiDiv.classList.add('loading');
 
@@ -2460,9 +2515,9 @@ async function doGenChat() {
     }
   } catch (e) {
     aiDiv.textContent = '错误: ' + e.message;
+  } finally {
+    unlockAllButtons();
   }
-  isStreaming = false;
-  els.genChatSendBtn.disabled = false;
 }
 
 function appendGenChatBubble(role, text) {
@@ -2483,8 +2538,7 @@ async function doChat() {
   appendChatBubble('user', msg);
   els.chatInput.value = '';
 
-  isStreaming = true;
-  els.chatSendBtn.disabled = true;
+  lockAllButtons();
   const aiDiv = appendChatBubble('ai', '思考中...');
   aiDiv.classList.add('loading');
 
@@ -2520,9 +2574,9 @@ async function doChat() {
     }
   } catch (e) {
     aiDiv.textContent = '错误: ' + e.message;
+  } finally {
+    unlockAllButtons();
   }
-  isStreaming = false;
-  els.chatSendBtn.disabled = false;
 }
 
 function appendChatBubble(role, text) {
@@ -2539,8 +2593,7 @@ async function doGenerateHtml() {
   const resume = els.resumeOutput.value.trim();
   if (!resume) return alert('请先完成简历编辑');
 
-  isStreaming = true;
-  els.generateHtmlBtn.disabled = true;
+  lockAllButtons();
   els.htmlStatus.textContent = '生成 HTML 中...';
   els.htmlStatus.className = 'status-text';
   if (els.htmlTokenInfo) els.htmlTokenInfo.textContent = '';
@@ -2644,8 +2697,7 @@ async function doGenerateHtml() {
     els.htmlStatus.textContent = '生成失败: ' + e.message;
     els.htmlStatus.className = 'status-text error';
   } finally {
-    isStreaming = false;
-    updateGenerateBtn();
+    unlockAllButtons();
   }
 }
 
@@ -2692,8 +2744,7 @@ async function doHtmlChat() {
   els.htmlUploadStatus.textContent = '';
   els.htmlPdfUpload.value = '';
 
-  isStreaming = true;
-  els.htmlChatSendBtn.disabled = true;
+  lockAllButtons();
   const aiDiv = appendHtmlChatBubble('ai', '思考中...');
   aiDiv.classList.add('loading');
 
@@ -2750,9 +2801,9 @@ async function doHtmlChat() {
   } catch (e) {
     aiDiv.classList.remove('loading');
     aiDiv.textContent = '错误: ' + e.message;
+  } finally {
+    unlockAllButtons();
   }
-  isStreaming = false;
-  els.htmlChatSendBtn.disabled = false;
 }
 
 function appendHtmlChatBubble(role, text) {
@@ -2835,10 +2886,10 @@ async function handleLoadFile(e, type) {
   
   const statusEl = type === 'gen' ? els.genFileStatus :
                   type === 'review' ? els.reviewFileStatus :
-                  els.htmlFormatFileStatus;
+                  type === 'htmlFormat' ? els.htmlFormatFileStatus :
+                  els.preprocessFileStatus;
   
-  const isStreamingOriginal = isStreaming;
-  isStreaming = true;
+  lockAllButtons();
   statusEl.textContent = '读取文件中...';
   statusEl.className = 'status-text';
   
@@ -2878,7 +2929,7 @@ async function handleLoadFile(e, type) {
     statusEl.className = 'status-text error';
     console.error('文件加载失败:', err);
   } finally {
-    isStreaming = isStreamingOriginal;
+    unlockAllButtons();
   }
 }
 
@@ -2958,8 +3009,7 @@ async function handleSaveFile(type) {
                   type === 'htmlFormat' ? els.htmlFormatFileStatus :
                   els.preprocessFileStatus;
   
-  const isStreamingOriginal = isStreaming;
-  isStreaming = true;
+  lockAllButtons();
   statusEl.textContent = '保存中...';
   statusEl.className = 'status-text';
   
@@ -3013,7 +3063,7 @@ async function handleSaveFile(type) {
     statusEl.className = 'status-text error';
     console.error('文件保存失败:', err);
   } finally {
-    isStreaming = isStreamingOriginal;
+    unlockAllButtons();
   }
 }
 
