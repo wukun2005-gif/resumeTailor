@@ -2041,7 +2041,7 @@ async function doGenerate() {
 
   lockAllButtons();
   els.resumeOutput.value = '';
-  els.resumeStatusAndToken.textContent = '生成中...';
+  els.resumeStatusAndToken.textContent = '正在准备生成...';
   chatMessages = [];
   els.chatHistory.innerHTML = '';
   els.applyReviewBtn.disabled = true;
@@ -2076,6 +2076,8 @@ async function doGenerate() {
     } else {
       hideSameCompanyHint();
     }
+    els.resumeStatusAndToken.textContent = '正在向 AI 发送请求...';
+    let firstChunkReceived = false;
     rawOutput = await api.streamRequest('/api/generate', {
       model, mock,
       jd, baseResume: resume,
@@ -2085,6 +2087,10 @@ async function doGenerate() {
       previouslySubmitted,
       reasoning: getReasoningForAgent('generator'),
     }, (chunk, full) => {
+      if (!firstChunkReceived) {
+        firstChunkReceived = true;
+        els.resumeStatusAndToken.textContent = 'AI 正在生成简历...';
+      }
       // During streaming, show full raw output
       els.resumeOutput.value = full;
       els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;
@@ -2119,7 +2125,7 @@ async function doGenerate() {
       updateSessionTotal();
     }
 
-    els.resumeStatusAndToken.textContent = '生成完成，正在自动保存...';
+    els.resumeStatusAndToken.textContent = '正在自动保存到素材库...';
     els.saveResumeBtn.disabled = false;
     els.generateHtmlBtn.disabled = false;
     persistDraftState(true);
