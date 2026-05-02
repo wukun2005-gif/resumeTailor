@@ -1309,6 +1309,9 @@ async function saveSettings() {
   await state.setCredential('pii_website', els.cfgPiiWebsite.value.trim());
   await state.setCredential('pii_other', els.cfgPiiOther.value.trim());
 
+  const savedBtnText = els.settingsSave.textContent;
+  els.settingsSave.textContent = '连接中...';
+  els.settingsSave.disabled = true;
   els.settingsStatus.textContent = '连接中...';
   els.settingsStatus.className = 'status-text';
   try {
@@ -1317,7 +1320,10 @@ async function saveSettings() {
     if (libPath) allowedPaths.push(libPath);
     const connections = buildModelConnections();
 
-    const result = await api.initAPI({ modelConnections: connections, allowedPaths, piiConfig: buildPiiConfig() });
+    const [result] = await Promise.all([
+      api.initAPI({ modelConnections: connections, allowedPaths, piiConfig: buildPiiConfig() }),
+      new Promise(r => setTimeout(r, 500)),
+    ]);
     const readyCount = result.readyConnections?.length || 0;
     if (readyCount > 0) {
       els.settingsStatus.textContent = `${readyCount} 个连接已就绪: ${result.readyConnections.join(', ')}`;
@@ -1330,6 +1336,9 @@ async function saveSettings() {
   } catch (e) {
     els.settingsStatus.textContent = '连接失败: ' + e.message;
     els.settingsStatus.className = 'status-text error';
+  } finally {
+    els.settingsSave.textContent = savedBtnText;
+    els.settingsSave.disabled = false;
   }
 }
 
