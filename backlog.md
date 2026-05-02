@@ -7,15 +7,21 @@
 
 ## A. 引导与首次体验（Onboarding）
 
-### [ ] A5. 「保存并连接」按钮状态反馈
+### [✅] A5. 「保存并连接」按钮状态反馈
 
 **问题**: 用户点击"保存并连接"后，不知道操作是否在进行中或已成功/失败。
 **改动范围**:
 - `src/main.js`: 点击时将按钮文案改为"连接中..."并 disable；成功/失败后恢复文案 + 显示对应状态文字
-- `src/style.css`: 可选：按钮 loading 态样式微调
+- `src/style.css`: 未改动，复用已有 `.btn-primary:disabled` 样式
 **验证方式**:
 1. 仿真模式下点保存 → 按钮应显示"连接中..."约 0.5~1 秒后恢复为"保存并连接"
 2. 故意留空 API Key 点保存 → 按钮恢复并显示错误信息
+
+**实现状态**: ✅ 已完成 — commit d00d2bb
+- `saveSettings()` 进入异步阶段前禁用按钮并改文案为"连接中..."
+- `finally` 块中恢复按钮文案和可用状态
+- `Promise.all` 最少 500ms 展示加载态，确保快速操作下用户可见反馈
+- 复用 Gemini model save handler 的 disabled/finally 模式
 
 ---
 
@@ -50,18 +56,25 @@
 
 > **注意**: C4（OCR 处理进度条）已在代码中实现（`main.js:1308`），无需再做。
 
-### [ ] C1. 素材库加载状态提示
+### [✅] C1. 素材库加载状态提示
 
 **问题**: 用户点击"加载素材库"后无任何视觉反馈，不知道系统是否在处理。
 **改动范围**:
-- `src/main.js`: `handleLoadLibrary()` 函数内：
+- `src/main.js`: `loadLibrary()` 函数内：
   - 调用前：设置 `els.exportDigestStatus.textContent = '正在读取素材库...'`
-  - 成功后：`'已加载 N 个文件，去重后 M 段'`
+  - 成功后：调用 `api.getLibraryDigest()` 计算去重段数，显示 `'已加载 N 个文件，去重后 M 段'`
   - 失败后：红色错误提示
-- `src/style.css`: 可选：loading 动画样式（如 `.status-text.loading::after` 已有）
+- `src/style.css`: 未改动，复用已有 `.status-text` / `.status-text.success` / `.status-text.error`
 **验证方式**:
-1. 点击加载 → 应显示"正在读取..."
-2. 加载完成 → 显示文件数统计
+1. 点击加载 → 应显示"正在读取素材库..."
+2. 加载完成 → 显示"已加载 N 个文件，去重后 M 段"（绿色）
+
+**实现状态**: ✅ 已完成
+- 加载前设置 `exportDigestStatus` 为"正在读取素材库..."
+- 成功后调用 `api.getLibraryDigest(dir, [])` 获取去重数据，统计总段落数
+- 失败后显示红色错误提示
+- `silent` 模式不显示状态提示
+- E2E 测试 142/142 全部通过
 
 ### [ ] C2. 生成进度分阶段提示
 

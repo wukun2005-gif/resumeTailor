@@ -1497,17 +1497,32 @@ async function loadLibrary(silent = false) {
   const dir = els.libraryPath.value.trim();
   if (!dir) { if (!silent) alert('请输入素材库路径'); return; }
   state.set('libraryPath', dir);
+  if (!silent) {
+    els.exportDigestStatus.textContent = '正在读取素材库...';
+    els.exportDigestStatus.className = 'status-text';
+  }
   try {
     const files = await api.listFiles(dir);
     await applyLibraryFiles(files);
     const readableCount = files.filter(f => f.readable).length;
-    if (!silent) {
-      els.resumeStatusAndToken.textContent = `已加载 ${files.length} 个文件（${readableCount} 个可读取）`;
-    }
     // Enable export button when library has readable files
     els.exportDigestBtn.disabled = readableCount === 0;
+    if (!silent) {
+      // 计算去重段数
+      const { digest } = await api.getLibraryDigest(dir, []);
+      const segmentCount = digest.reduce((sum, item) => {
+        const paras = item.content.split('\n\n').filter(p => p.trim());
+        return sum + paras.length;
+      }, 0);
+      els.exportDigestStatus.textContent = `已加载 ${files.length} 个文件，去重后 ${segmentCount} 段`;
+      els.exportDigestStatus.className = 'status-text success';
+      els.resumeStatusAndToken.textContent = `已加载 ${files.length} 个文件（${readableCount} 个可读取）`;
+    }
   } catch (e) {
-    if (!silent) alert('加载失败: ' + e.message);
+    if (!silent) {
+      els.exportDigestStatus.textContent = '加载失败: ' + e.message;
+      els.exportDigestStatus.className = 'status-text error';
+    }
     els.exportDigestBtn.disabled = true;
   }
 }
