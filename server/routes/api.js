@@ -372,7 +372,18 @@ router.post('/review', async (req, res) => {
 router.post('/review-multi', async (req, res) => {
   if (req.body.mock) {
     const hasCoverLetter = (req.body.updatedResume || '').includes('求职信');
-    return streamMock(res, MOCK.reviewMerge + (hasCoverLetter ? MOCK.reviewMergeCoverLetter : ''));
+    setupSSE(res);
+    const mockTotal = (req.body.models || []).length || 2;
+    sendSSE(res, { type: 'chunk', text: '正在并行调用多个评审模型...\n\n' });
+    sendSSE(res, { type: 'progress', text: `正在启动并行评审（共 ${mockTotal} 个模型）...` });
+    for (let i = 1; i <= mockTotal; i++) {
+      sendSSE(res, { type: 'progress', text: `已完成 ${i}/${mockTotal} 个模型评审，正在进行合并...` });
+    }
+    sendSSE(res, { type: 'chunk', text: '--- 正在合并评审意见 ---\n\n' });
+    const mockText = MOCK.reviewMerge + (hasCoverLetter ? MOCK.reviewMergeCoverLetter : '');
+    for (const c of mockText.split('')) { sendSSE(res, { type: 'chunk', text: c }); }
+    sendSSE(res, { type: 'done' });
+    return res.end();
   }
   setupSSE(res);
   try {
@@ -385,11 +396,16 @@ router.post('/review-multi', async (req, res) => {
     const resolvedReasoning = resolveReasoning(reasoning, '/review-multi');
     const { system, user, userBlocks } = getReviewPromptConcise({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted });
 
-    // Run all reviewers in parallel (concise format, no SSE streaming for individual results)
+    // Run all reviewers in parallel with progress tracking
+    const total = models.length;
+    let completed = 0;
     sendSSE(res, { type: 'chunk', text: '正在并行调用多个评审模型...\n\n' });
+    sendSSE(res, { type: 'progress', text: `正在启动并行评审（共 ${total} 个模型）...` });
     const results = await Promise.all(models.map(async (model) => {
       const caller = getModelCaller(model);
       const result = await caller(user, () => {}, { system, maxTokens: 3072, userBlocks, reasoning: resolvedReasoning });
+      completed++;
+      sendSSE(res, { type: 'progress', text: `已完成 ${completed}/${total} 个模型评审，正在进行合并...` });
       return { model, text: result.text, usage: result.usage };
     }));
 

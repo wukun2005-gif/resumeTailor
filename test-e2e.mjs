@@ -284,12 +284,14 @@ function parseSSEText(text) {
   let usage = null;
   let model = null;
   let fromCache = null;
+  let progress = [];
 
   for (const line of text.split('\n')) {
     if (!line.startsWith('data: ')) continue;
     try {
       const data = JSON.parse(line.slice(6));
       if (data.type === 'chunk') result += data.text || '';
+      if (data.type === 'progress') progress.push(data.text || '');
       if (data.type === 'error') error = data.message || '未知错误';
       if (data.type === 'done') {
         usage = data.usage || null;
@@ -299,7 +301,7 @@ function parseSSEText(text) {
     } catch {}
   }
 
-  return { text: result, error, usage, model, fromCache };
+  return { text: result, error, usage, model, fromCache, progress };
 }
 
 function isModelQuotaError(text = '') {
@@ -553,6 +555,9 @@ async function testReviewMulti(generatedResume) {
 
   log('/review-multi has merged content', result.text.length > 250, `length=${result.text.length}`);
   log('/review-multi merge banner present', result.text.includes('正在合并评审意见') || result.text.includes('综合'), result.text.slice(0, 120).replace(/\n/g, '\\n'));
+  log('/review-multi has progress events', result.progress.length > 0, `progress=${JSON.stringify(result.progress)}`);
+  log('/review-multi progress starts with total count', result.progress.some(p => /共\s*\d+\s*个模型/.test(p)), result.progress[0] || '(none)');
+  log('/review-multi progress has completion count', result.progress.some(p => /已完成.*个模型评审/.test(p)), result.progress.find(p => /已完成/.test(p)) || '(none)');
 }
 
 async function testApplyReview(reviewComments) {

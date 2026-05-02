@@ -2245,6 +2245,8 @@ async function doReview() {
         els.reviewOutput.value = full;
         els.reviewOutput.scrollTop = els.reviewOutput.scrollHeight;
         persistDraftState();
+      }, (progressText) => {
+        els.reviewStatusAndToken.textContent = progressText;
       });
     } else {
       // Single reviewer

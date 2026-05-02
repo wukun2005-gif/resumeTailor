@@ -1,4 +1,4 @@
-export async function streamRequest(endpoint, body, onChunk) {
+export async function streamRequest(endpoint, body, onChunk, onProgress) {
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -28,6 +28,7 @@ export async function streamRequest(endpoint, body, onChunk) {
       try {
         const data = JSON.parse(line.slice(6));
         if (data.type === 'chunk') { fullText += data.text; onChunk(data.text, fullText); }
+        else if (data.type === 'progress' && onProgress) { onProgress(data.text); }
         else if (data.type === 'error') throw new Error(data.message);
         else if (data.type === 'done') {
           usage = data.usage || { input: 0, output: 0 };
