@@ -1,4 +1,4 @@
-export async function streamRequest(endpoint, body, onChunk, onProgress) {
+export async function streamRequest(endpoint, body, onChunk, onProgress, onTimeout, onStreamResumed) {
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -16,31 +16,87 @@ export async function streamRequest(endpoint, body, onChunk, onProgress) {
   let fullText = '';
   let usage = { input: 0, output: 0 };
   let model = '';
+  let firstChunkReceived = false;
+  const TIMEOUT_MS = body._testTimeoutMs || 15000;
+  let streamStartTime = Date.now();
+  let lastChunkTime = Date.now();
+  let resolved = false;
+  let timeoutWarningShown = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      try {
-        const data = JSON.parse(line.slice(6));
-        if (data.type === 'chunk') { fullText += data.text; onChunk(data.text, fullText); }
-        else if (data.type === 'progress' && onProgress) { onProgress(data.text); }
-        else if (data.type === 'error') throw new Error(data.message);
-        else if (data.type === 'done') {
-          usage = data.usage || { input: 0, output: 0 };
-          model = data.model || '';
-          return { text: fullText, usage, model };
+  const showTimeoutWarning = () => {
+    if (!resolved && onTimeout && !timeoutWarningShown) {
+      timeoutWarningShown = true;
+      console.log('[Timeout] Showing timeout warning');
+      onTimeout('AI 响应较慢，请稍候...');
+    }
+  };
+
+  try {
+    while (true) {
+      // 记录 read() 前的超时状态，用于判断本周期内是否需要隐藏警告
+      const warningWasShownBeforeRead = timeoutWarningShown;
+
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // read() 完成，检查等待间隔是否超时
+      const now = Date.now();
+      if (!firstChunkReceived) {
+        // 等待首 chunk：检查从请求发出到现在的耗时
+        const elapsed = now - streamStartTime;
+        if (elapsed > TIMEOUT_MS) {
+          console.log('[Timeout] First chunk took', elapsed, 'ms');
+          showTimeoutWarning();
         }
-      } catch (e) {
-        if (e.message && !e.message.includes('JSON')) throw e;
+      } else {
+        // 等待后续 chunk：检查距上次 chunk 的间隔
+        const gap = now - lastChunkTime;
+        if (gap > TIMEOUT_MS) {
+          console.log('[Timeout] Gap between chunks:', gap, 'ms');
+          showTimeoutWarning();
+        }
+      }
+      lastChunkTime = now;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.type === 'chunk') {
+            if (!firstChunkReceived) {
+              firstChunkReceived = true;
+              const elapsed = Date.now() - streamStartTime;
+              console.log('[Timeout] First chunk received! elapsed:', elapsed, 'ms');
+            }
+            fullText += data.text;
+            onChunk(data.text, fullText);
+          }
+          else if (data.type === 'progress' && onProgress) { onProgress(data.text); }
+          else if (data.type === 'error') throw new Error(data.message);
+          else if (data.type === 'done') {
+            usage = data.usage || { input: 0, output: 0 };
+            model = data.model || '';
+            resolved = true;
+            return { text: fullText, usage, model };
+          }
+        } catch (e) {
+          if (e.message && !e.message.includes('JSON')) throw e;
+        }
+      }
+      // chunk 到达后，若在本次 read 之前已触发过超时警告，通知调用方数据已恢复
+      // （本次 read 内刚触发的警告不立即隐藏，让用户至少看到一个 chunk 周期）
+      if (warningWasShownBeforeRead && onStreamResumed) {
+        timeoutWarningShown = false;
+        onStreamResumed();
       }
     }
+    return { text: fullText, usage, model };
+  } finally {
+    resolved = true;
   }
-  return { text: fullText, usage, model };
 }
 
 export async function listFiles(dir) {
@@ -143,7 +199,7 @@ export async function getDefaultPreprocessPrompt() {
  * @param {Function} onSystem - Callback for system messages
  * @returns {Promise<{exportText: string, sourceTokens: number, digestTokens: number, fromCache: boolean, fallbackUsed: boolean}>}
  */
-export async function preprocessLibrary(dir, model, instructions, messages, excludeNames, mock, onChunk, onSystem) {
+export async function preprocessLibrary(dir, model, instructions, messages, excludeNames, mock, onChunk, onSystem, onTimeout, onStreamResumed) {
   const response = await fetch('/api/preprocess-library', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -166,41 +222,89 @@ export async function preprocessLibrary(dir, model, instructions, messages, excl
     fromCache: false,
     fallbackUsed: false
   };
+  let firstChunkReceived = false;
+  const TIMEOUT_MS = 15000;
+  let streamStartTime = Date.now();
+  let lastChunkTime = Date.now();
+  let resolved = false;
+  let timeoutWarningShown = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      try {
-        const data = JSON.parse(line.slice(6));
-        if (data.type === 'chunk') {
-          fullText += data.text;
-          if (onChunk) onChunk(data.text, fullText);
-        } else if (data.type === 'system') {
-          if (onSystem) onSystem(data.message);
-        } else if (data.type === 'error') {
-          throw new Error(data.message);
-        } else if (data.type === 'done') {
-          result = {
-            exportText: data.exportText || fullText,
-            sourceTokens: data.sourceTokens || 0,
-            digestTokens: data.digestTokens || 0,
-            fromCache: data.fromCache || false,
-            fallbackUsed: data.fallbackUsed || false,
-            usage: data.usage || { input: 0, output: 0 },
-            model: data.model || ''
-          };
+  const showTimeoutWarning = () => {
+    if (!resolved && onTimeout && !timeoutWarningShown) {
+      timeoutWarningShown = true;
+      console.log('[Timeout preprocess] Showing timeout warning');
+      onTimeout('AI 响应较慢，请稍候...');
+    }
+  };
+
+  try {
+    while (true) {
+      const warningWasShownBeforeRead = timeoutWarningShown;
+
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // read() 完成，检查等待间隔是否超时
+      const now = Date.now();
+      if (!firstChunkReceived) {
+        const elapsed = now - streamStartTime;
+        if (elapsed > TIMEOUT_MS) {
+          console.log('[Timeout preprocess] First chunk took', elapsed, 'ms');
+          showTimeoutWarning();
         }
-      } catch (e) {
-        if (e.message && !e.message.includes('JSON')) throw e;
+      } else {
+        const gap = now - lastChunkTime;
+        if (gap > TIMEOUT_MS) {
+          console.log('[Timeout preprocess] Gap between chunks:', gap, 'ms');
+          showTimeoutWarning();
+        }
+      }
+      lastChunkTime = now;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.type === 'chunk') {
+            if (!firstChunkReceived) {
+              firstChunkReceived = true;
+              const elapsed = Date.now() - streamStartTime;
+              console.log('[Timeout preprocess] First chunk received! elapsed:', elapsed, 'ms');
+            }
+            fullText += data.text;
+            if (onChunk) onChunk(data.text, fullText);
+          } else if (data.type === 'system') {
+            if (onSystem) onSystem(data.message);
+          } else if (data.type === 'error') {
+            throw new Error(data.message);
+          } else if (data.type === 'done') {
+            result = {
+              exportText: data.exportText || fullText,
+              sourceTokens: data.sourceTokens || 0,
+              digestTokens: data.digestTokens || 0,
+              fromCache: data.fromCache || false,
+              fallbackUsed: data.fallbackUsed || false,
+              usage: data.usage || { input: 0, output: 0 },
+              model: data.model || ''
+            };
+          }
+        } catch (e) {
+          if (e.message && !e.message.includes('JSON')) throw e;
+        }
+      }
+      // chunk 到达后，若在本次 read 之前已触发过超时警告，通知调用方数据已恢复
+      if (warningWasShownBeforeRead && onStreamResumed) {
+        timeoutWarningShown = false;
+        onStreamResumed();
       }
     }
+    return result;
+  } finally {
+    resolved = true;
   }
-  return result;
 }
 
 /**

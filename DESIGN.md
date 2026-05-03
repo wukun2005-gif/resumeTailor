@@ -807,6 +807,8 @@ Mock 数据包含：
 | 2026-04-07 | PII 脱敏保护（V1.x）；Token 消费审计 + 优化（第三轮）；Output Token 优化回归修复 + E2E 测试 | 安全增强/成本优化 | - |
 | 2026-04-06 | Output Token 优化：差分模式、精简 prompt、Body-only HTML；Token 全面优化：素材库缓存、本地 JD 解析、Prompt Caching；PDF 文本提取改用 Poppler pdftotext | 成本优化/依赖优化 | - |
 | 2026-04-05 | 跨投递一致性检查；多供应商模型配置系统重构 | 功能增强/架构重构 | - |
+| 2026-05-03 | 修复流式操作期间按钮锁定回归：B4 lockAllButtons 机制被 try 块中遗留的 `disabled = false` 旁路，导致生成/Review 等操作期间部分按钮仍可点击。删除 doGenerate/doReview/doApplyReview 中 4 处过早的按钮恢复调用，统一由 finally 块 unlockAllButtons → updateGenerateBtn 管理状态 | src/main.js | - |
+| 2026-05-03 | C5 AI 响应超时提示：修复超时检测逻辑，将 TIMEOUT_MS 从 3s 提升到 15s，并将检测点移到 reader.read() 后以正确捕获阻塞间隔；超时时通过专用超时警告 span 显示黄色提示（与进度文案同时显示，不覆盖）；新增 onStreamResumed 回调，数据恢复后自动隐藏超时警告；首次 chunk 后开始计时；新增 4 个超时测试用例 | src/api.js, src/main.js, src/style.css, index.html, test-e2e.mjs, DESIGN.md | - |
 | 2026-04-04 | HTML 助手对话 + PDF 上传 + 多项 Bug 修复 | 功能增强 | - |
 | 2026-04-03 | 初始版本发布 | 初始版本 | - |
 

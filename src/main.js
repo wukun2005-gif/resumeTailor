@@ -77,15 +77,15 @@ const els = {
   reviewLoadFile: $('reviewLoadFile'), reviewSaveFile: $('reviewSaveFile'), reviewFileStatus: $('reviewFileStatus'),
   htmlFormatLoadFile: $('htmlFormatLoadFile'), htmlFormatSaveFile: $('htmlFormatSaveFile'), htmlFormatFileStatus: $('htmlFormatFileStatus'),
   generateBtn: $('generateBtn'), outputSection: $('outputSection'),
-   resumeOutput: $('resumeOutput'), resumeStatusAndToken: $('resumeStatusAndToken'),
+   resumeOutput: $('resumeOutput'), resumeStatusAndToken: $('resumeStatusAndToken'), resumeTimeoutWarn: $('resumeTimeoutWarn'),
   saveResumeBtn: $('saveResumeBtn'), regenerateBtn: $('regenerateBtn'),
   saveFilenameRow: $('saveFilenameRow'), saveFilename: $('saveFilename'), confirmSaveBtn: $('confirmSaveBtn'), cancelSaveBtn: $('cancelSaveBtn'),
-   reviewBtn: $('reviewBtn'), reviewOutput: $('reviewOutput'), reviewStatusAndToken: $('reviewStatusAndToken'),
+   reviewBtn: $('reviewBtn'), reviewOutput: $('reviewOutput'), reviewStatusAndToken: $('reviewStatusAndToken'), reviewTimeoutWarn: $('reviewTimeoutWarn'),
   applyReviewBtn: $('applyReviewBtn'),
   chatHistory: $('chatHistory'), chatInput: $('chatInput'), chatSendBtn: $('chatSendBtn'),
   genNotesSection: $('genNotesSection'), genNotesOutput: $('genNotesOutput'),
   genChatSection: $('genChatSection'), genChatHistory: $('genChatHistory'), genChatInput: $('genChatInput'), genChatSendBtn: $('genChatSendBtn'),
-  generateHtmlBtn: $('generateHtmlBtn'), htmlStatus: $('htmlStatus'),
+  generateHtmlBtn: $('generateHtmlBtn'), htmlStatus: $('htmlStatus'), htmlTimeoutWarn: $('htmlTimeoutWarn'),
   htmlChatSection: $('htmlChatSection'), htmlChatHistory: $('htmlChatHistory'), htmlChatInput: $('htmlChatInput'), htmlChatSendBtn: $('htmlChatSendBtn'),
   htmlPdfUpload: $('htmlPdfUpload'), htmlUploadStatus: $('htmlUploadStatus'), htmlTokenInfo: $('htmlTokenInfo'),
   openPdfBtn: $('openPdfBtn'), openPdfFileInput: $('openPdfFileInput'),
@@ -278,7 +278,6 @@ function persistDraftState() {}
 
 function clearWorkspaceState() {
   state.set('draftState', null);
-  state.set('baseResume', '');
 
   els.jdInput.value = '';
   els.manualResumeInput.value = '';
@@ -1148,6 +1147,8 @@ async function doPreprocessChat() {
       aiDiv.classList.remove('loading');
       aiDiv.textContent = full;
       els.preprocessChatHistory.scrollTop = els.preprocessChatHistory.scrollHeight;
+    }, undefined, (msg) => {
+      appendPreprocessChatBubble('system', '⚠️ ' + msg);
     });
     
     preprocessChatMessages.push({ role: 'assistant', content: result.text || result });
@@ -1666,11 +1667,11 @@ async function exportDigestWithAi() {
     
     let fullText = '';
     const result = await api.preprocessLibrary(
-      dir, 
-      model, 
-      instructions, 
+      dir,
+      model,
+      instructions,
       [], // 初始无消息
-      [], 
+      [],
       els.mockMode.checked,
       (chunk, text) => {
         fullText = text;
@@ -1681,6 +1682,10 @@ async function exportDigestWithAi() {
         } else {
           appendPreprocessChatBubble('ai', text);
         }
+      },
+      undefined, // onSystem (not used here)
+      (msg) => {
+        appendPreprocessChatBubble('system', '⚠️ ' + msg);
       }
     );
     
@@ -2086,6 +2091,9 @@ async function doGenerate() {
       generateCoverLetter: els.generateCoverLetter.checked,
       previouslySubmitted,
       reasoning: getReasoningForAgent('generator'),
+      // --- 测试超时提示：取消下面两行注释即可 ---
+      // _testTimeoutMs: 1000,  // 前端超时阈值（ms）
+      // _testDelayMs: 2000,    // 后端每个 chunk 注入延迟（ms）
     }, (chunk, full) => {
       if (!firstChunkReceived) {
         firstChunkReceived = true;
@@ -2095,6 +2103,10 @@ async function doGenerate() {
       els.resumeOutput.value = full;
       els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;
       persistDraftState();
+    }, undefined, () => {
+      els.resumeTimeoutWarn.style.display = '';
+    }, () => {
+      els.resumeTimeoutWarn.style.display = 'none';
     });
 
     // After streaming done, parse and separate
@@ -2126,8 +2138,6 @@ async function doGenerate() {
     }
 
     els.resumeStatusAndToken.textContent = '正在自动保存到素材库...';
-    els.saveResumeBtn.disabled = false;
-    els.generateHtmlBtn.disabled = false;
     persistDraftState(true);
 
     // Auto-save to library (save only resume body, not notes)
@@ -2247,6 +2257,10 @@ async function doReview() {
         persistDraftState();
       }, (progressText) => {
         els.reviewStatusAndToken.textContent = progressText;
+      }, () => {
+        els.reviewTimeoutWarn.style.display = '';
+      }, () => {
+        els.reviewTimeoutWarn.style.display = 'none';
       });
     } else {
       // Single reviewer
@@ -2258,6 +2272,10 @@ async function doReview() {
         els.reviewOutput.value = full;
         els.reviewOutput.scrollTop = els.reviewOutput.scrollHeight;
         persistDraftState();
+      }, undefined, () => {
+        els.reviewTimeoutWarn.style.display = '';
+      }, () => {
+        els.reviewTimeoutWarn.style.display = 'none';
       });
     }
 
@@ -2277,7 +2295,6 @@ async function doReview() {
     }
 
     els.reviewStatusAndToken.textContent = 'Review 完成';
-    els.applyReviewBtn.disabled = false;
     persistDraftState(true);
   } catch (e) {
     els.reviewStatusAndToken.textContent = 'Review 失败: ' + e.message;
@@ -2401,6 +2418,10 @@ async function doApplyReview() {
       els.resumeOutput.value = full;
       els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;
       persistDraftState();
+    }, undefined, () => {
+      els.resumeTimeoutWarn.style.display = '';
+    }, () => {
+      els.resumeTimeoutWarn.style.display = 'none';
     });
 
     // Display token usage
@@ -2426,8 +2447,6 @@ async function doApplyReview() {
       } else {
         els.resumeStatusAndToken.textContent = `已应用 ${applied} 处修改，正在自动保存...`;
       }
-      els.saveResumeBtn.disabled = false;
-      els.generateHtmlBtn.disabled = false;
       persistDraftState(true);
       await autoSaveToLibrary();
     } else {
@@ -2460,6 +2479,10 @@ async function doApplyReview() {
         els.resumeOutput.value = full;
         els.resumeOutput.scrollTop = els.resumeOutput.scrollHeight;
         persistDraftState();
+      }, undefined, () => {
+        els.resumeTimeoutWarn.style.display = '';
+      }, () => {
+        els.resumeTimeoutWarn.style.display = 'none';
       });
 
       // Display token usage
@@ -2476,8 +2499,6 @@ async function doApplyReview() {
       els.resumeOutput.value = resumeBody;
 
       els.resumeStatusAndToken.textContent = '更新完成（全量重生成），正在自动保存...';
-      els.saveResumeBtn.disabled = false;
-      els.generateHtmlBtn.disabled = false;
       persistDraftState(true);
       await autoSaveToLibrary();
     }
@@ -2520,6 +2541,9 @@ async function doGenChat() {
       aiDiv.classList.remove('loading');
       aiDiv.textContent = full;
       els.genChatHistory.scrollTop = els.genChatHistory.scrollHeight;
+    }, undefined, (msg) => {
+      aiDiv.textContent = '提示: ' + msg;
+      aiDiv.classList.add('timeout-warning');
     });
     genChatMessages.push({ role: 'assistant', content: result.text || result });
 
@@ -2585,6 +2609,9 @@ async function doChat() {
       aiDiv.classList.remove('loading');
       aiDiv.textContent = full;
       els.chatHistory.scrollTop = els.chatHistory.scrollHeight;
+    }, undefined, (msg) => {
+      aiDiv.textContent = '提示: ' + msg;
+      aiDiv.classList.add('timeout-warning');
     });
     chatMessages.push({ role: 'assistant', content: result.text || result });
 
@@ -2637,7 +2664,11 @@ async function doGenerateHtml() {
       model, mock: els.mockMode.checked,
       resumeText: resume,
       htmlInstructions: els.htmlInstructions.value,
-    }, (chunk, full) => { htmlContent = full; });
+    }, (chunk, full) => { htmlContent = full; }, undefined, () => {
+      els.htmlTimeoutWarn.style.display = '';
+    }, () => {
+      els.htmlTimeoutWarn.style.display = 'none';
+    });
 
     // Extract and clean body content from result
     let bodyContent = result.text || result;
@@ -2790,6 +2821,9 @@ async function doHtmlChat() {
       aiDiv.classList.remove('loading');
       aiDiv.textContent = full;
       els.htmlChatHistory.scrollTop = els.htmlChatHistory.scrollHeight;
+    }, undefined, (msg) => {
+      aiDiv.textContent = '提示: ' + msg;
+      aiDiv.classList.add('timeout-warning');
     });
     htmlChatMessages.push({ role: 'assistant', content: result.text || result });
 

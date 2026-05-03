@@ -169,12 +169,12 @@ function tryLocalJdParse(jdText) {
   return { company, department, title, language: lang };
 }
 
-async function streamMock(res, text) {
+async function streamMock(res, text, delayMs = 12) {
   setupSSE(res);
   const chars = text.split('');
   for (const c of chars) {
     sendSSE(res, { type: 'chunk', text: c });
-    await new Promise(r => setTimeout(r, 12));
+    await new Promise(r => setTimeout(r, delayMs));
   }
   sendSSE(res, { type: 'done' });
   res.end();
@@ -317,7 +317,7 @@ router.post('/generate', async (req, res) => {
     let mockText = MOCK.resume;
     if (req.body.generateCoverLetter) mockText += MOCK.coverLetter;
     mockText += MOCK.notes;
-    return streamMock(res, mockText);
+    return streamMock(res, mockText, req.body._testDelayMs || 12);
   }
   setupSSE(res);
   try {
@@ -326,12 +326,16 @@ router.post('/generate', async (req, res) => {
       sanitizeRequestBody(req.body, ['jd', 'baseResume', 'instructions', 'previouslySubmitted'], piiEntries);
       sanitizeLibrary(req.body.resumeLibrary, piiEntries);
     }
-    const { model, jd, baseResume, resumeLibrary, instructions, generateCoverLetter, previouslySubmitted, generateNotes, reasoning } = req.body;
+    const { model, jd, baseResume, resumeLibrary, instructions, generateCoverLetter, previouslySubmitted, generateNotes, reasoning, _testDelayMs } = req.body;
     const caller = getModelCaller(model);
     const resolvedReasoning = resolveReasoning(reasoning, '/generate');
     const { system, user, userBlocks } = getResumeGenerationPrompt({ jd, originalResume: baseResume, resumeLibrary, instructions, previouslySubmitted, generateCoverLetter, generateNotes });
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
-    const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
+    let onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
+    if (_testDelayMs > 0) {
+      const origOnChunk = onChunk;
+      onChunk = async chunk => { await new Promise(r => setTimeout(r, _testDelayMs)); origOnChunk(chunk); };
+    }
     const result = await caller(user, onChunk, { system, maxTokens: 8192, userBlocks, reasoning: resolvedReasoning });
     if (restorer) restorer.end();
     sendSSE(res, { type: 'done', usage: result.usage, model });

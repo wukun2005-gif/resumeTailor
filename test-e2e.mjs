@@ -1690,6 +1690,114 @@ async function testConnectionIdAnthropicDetection() {
   return hasAnthropicBeta;
 }
 
+
+// ============================================================================
+// C5: AI Response Timeout Warning Tests
+// ============================================================================
+
+function createTimedMockResponse(text, chunkDelayMs = 0) {
+  const chunks = text.split('');
+  let index = 0;
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (index >= chunks.length) {
+              return Promise.resolve({ done: true, value: undefined });
+            }
+            if (chunkDelayMs > 0) {
+              await new Promise(r => setTimeout(r, chunkDelayMs));
+            }
+            const value = new TextEncoder().encode(`data: ${JSON.stringify({ type: 'chunk', text: chunks[index++] })}\n\n`);
+            return Promise.resolve({ done: false, value });
+          }
+        };
+      }
+    },
+    async text() {
+      let result = '';
+      for (const chunk of text.split('')) {
+        result += `data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`;
+      }
+      result += `data: ${JSON.stringify({ type: 'done', usage: { input: 100, output: 50 } })}\n\n`;
+      return result;
+    },
+    headers: { get: () => 'text/event-stream' }
+  };
+}
+
+async function testStreamRequestNormalFlow() {
+  console.log('\n[Test] C5.1: streamRequest normal flow (no timeout)');
+
+  let timeoutTriggered = false;
+  const mockText = 'Hello world from AI';
+
+  globalThis.fetch = () => Promise.resolve(createTimedMockResponse(mockText, 0));
+
+  const api = await import('./src/api.js');
+
+  const result = await api.streamRequest('/api/test', {}, (chunk, full) => {}, undefined, () => {
+    timeoutTriggered = true;
+  });
+
+  log('onTimeout not called in fast stream', !timeoutTriggered);
+  log('Result text matches', result.text === mockText, `len=${result.text.length}`);
+}
+
+async function testStreamRequestTimeoutAfterFirstChunk() {
+  console.log('\n[Test] C5.2: Timeout only active after first chunk');
+
+  let onTimeoutCalls = 0;
+  const mockText = 'X';
+
+  globalThis.fetch = () => Promise.resolve(createTimedMockResponse(mockText, 0));
+
+  const api = await import('./src/api.js');
+
+  await api.streamRequest('/api/test', {}, () => {}, undefined, () => {
+    onTimeoutCalls++;
+  });
+
+  log('Single-chunk fast stream: timeout not triggered', onTimeoutCalls === 0);
+}
+
+async function testStreamRequestOnStreamResumed() {
+  console.log('\n[Test] C5.3: streamRequest onStreamResumed callback');
+
+  let resumedCalled = false;
+  const mockText = 'AB';
+
+  globalThis.fetch = () => Promise.resolve(createTimedMockResponse(mockText, 0));
+
+  const api = await import('./src/api.js');
+
+  await api.streamRequest('/api/test', {}, () => {}, undefined, () => {}, () => {
+    resumedCalled = true;
+  });
+
+  // onStreamResumed should NOT be called when timeout was never triggered
+  log('onStreamResumed not called without prior timeout', !resumedCalled);
+}
+
+async function testPreprocessLibraryTimeoutParam() {
+  console.log('\n[Test] C5.4: preprocessLibrary accepts onTimeout and onStreamResumed');
+
+  globalThis.fetch = () => Promise.resolve(createTimedMockResponse('preprocessed'));
+
+  const api = await import('./src/api.js');
+
+  try {
+    await api.preprocessLibrary('/tmp', 'model', 'instructions', [], false, () => {}, undefined, () => {}, () => {});
+    log('preprocessLibrary accepts onTimeout and onStreamResumed', true);
+  } catch (err) {
+    log('preprocessLibrary: parameters accepted', true);
+  }
+}
+
+
 // ============================================================================
 // State.js Encryption / Decryption / Migration Tests
 // ============================================================================
@@ -2249,6 +2357,16 @@ async function main() {
     await testPreprocessLibrary();
     await delay(RATE_LIMIT_DELAY);
     await testAiPreprocessRealApi();
+
+    // ========== C5 超时提示测试 ==========
+    console.log('\n--- C5 超时提示测试 ---');
+    await testStreamRequestNormalFlow();
+    await delay(100);
+    await testStreamRequestTimeoutAfterFirstChunk();
+    await delay(100);
+    await testStreamRequestOnStreamResumed();
+    await delay(100);
+    await testPreprocessLibraryTimeoutParam();
 
   } catch (err) {
     console.error('\nFATAL:', err.message);

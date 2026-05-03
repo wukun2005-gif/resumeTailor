@@ -364,7 +364,7 @@
         <!-- Left: Resume -->
         <div class="panel">
           <div class="panel-header">
-            <h3>简历 / 求职信<span id="resumeStatusAndToken" style="font-size:0.85rem;color:#666;margin-left:12px;"></span></h3>
+            <h3>简历 / 求职信<span id="resumeStatusAndToken" style="font-size:0.85rem;color:#666;margin-left:12px;"></span><span id="resumeTimeoutWarn" class="stream-timeout-warning" style="display:none">⚠ AI 响应较慢，请稍候...</span></h3>
             <div class="panel-actions">
               <button id="saveResumeBtn" class="btn-secondary btn-sm" disabled>保存到素材库</button>
               <button id="regenerateBtn" class="btn-secondary btn-sm">重新生成</button>
@@ -394,7 +394,7 @@
         <!-- Right: Review -->
         <div class="panel">
           <div class="panel-header">
-            <h3>Review<span id="reviewStatusAndToken" style="font-size:0.85rem;color:#666;margin-left:12px;"></span></h3>
+            <h3>Review<span id="reviewStatusAndToken" style="font-size:0.85rem;color:#666;margin-left:12px;"></span><span id="reviewTimeoutWarn" class="stream-timeout-warning" style="display:none">⚠ AI 响应较慢，请稍候...</span></h3>
             <div class="panel-actions">
               <button id="reviewBtn" class="btn-secondary btn-sm">开始 Review</button>
               <button id="applyReviewBtn" class="btn-secondary btn-sm" disabled>采纳并更新简历</button>
@@ -422,7 +422,7 @@
             </button>
             <input type="file" id="openPdfFileInput" accept=".pdf" style="display:none">
             <span id="htmlTokenInfo" style="font-size:0.8rem;color:#666;white-space:nowrap;"></span>
-            <span id="htmlStatus" class="status-text"></span>
+            <span id="htmlStatus" class="status-text"></span><span id="htmlTimeoutWarn" class="stream-timeout-warning" style="display:none">⚠ AI 响应较慢，请稍候...</span>
           </div>
         </div>
       </div>

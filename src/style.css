@@ -88,6 +88,9 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
 .status-text { font-size: 12px; color: #6b7280; }
 .status-text.success { color: #059669; }
 .status-text.error { color: #dc2626; }
+.status-text.warning { color: #d97706 !important; font-weight: 600; }
+.timeout-warning { color: #d97706 !important; font-style: italic; }
+.stream-timeout-warning { color: #d97706; font-size: 12px; margin-left: 8px; font-weight: 600; }
 .loading::after { content: ' ...'; }
 
 /* ── Modal ── */

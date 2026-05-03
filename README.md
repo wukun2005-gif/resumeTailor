@@ -532,6 +532,43 @@ flowchart LR
 - HTML导出不会自动开始——用户点击"生成HTML并下载"
 - 采纳修改不会自动应用——用户点击"采纳并更新简历"
 
+### 5.5 响应等待超时提示
+
+当网络波动或 AI 模型响应缓慢时，SSE 流可能长时间没有数据输出，用户容易误以为程序卡死。本功能提供实时反馈：
+
+- **触发条件**：SSE 流收到首条 chunk 后，若后续间隔超过 **15 秒** 无新数据
+- **提示位置**：当前操作对应的 status 区域旁的专用警告 span（与进度文案同时显示，不覆盖）
+- **提示样式**：黄色文字 "⚠ AI 响应较慢，请稍候..."，独立于进度状态文案
+- **自动恢复**：一旦收到新 chunk，警告自动消失，进度恢复正常
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant A as AI 服务
+    U->>F: 点击"开始生成"
+    F->>A: 发送 SSE 请求
+    A-->>F: 首 chunk 到达（首 chunk 到达时）
+    Note over F: 开始计时
+    loop 持续等待
+        A-->>F: 后续 chunk
+        Note over F: 重置计时器
+    end
+    alt 超过 15 秒无 chunk
+        F->>U: 显示黄色超时警告（并存于进度文案）
+        A-->>F: 新 chunk 到达
+        F->>U: 警告自动消失
+    end
+    A-->>F: 流结束
+    F->>U: 显示完成状态
+```
+
+**实现要点**：
+1. 在 `streamRequest()` 中维护 `lastChunkTime` 和 `firstChunkReceived` 标志
+2. 每次 `reader.read()` 后检查：`if (firstChunkReceived && Date.now() - lastChunkTime > 15000) onTimeout(msg)`
+3. 前端各调用点通过第 5 个参数传入 `onTimeout` 回调，显示对应区域的专用超时警告 span
+4. 通过第 6 个参数 `onStreamResumed` 回调，在数据恢复后自动隐藏警告
+
 ---
 
 ## 6. Token成本优化战略
