@@ -1799,6 +1799,91 @@ async function testPreprocessLibraryTimeoutParam() {
 
 
 // ============================================================================
+// F1: SSE 断连重试 — isNetworkError 分类 + 流断开检测
+// ============================================================================
+
+async function testIsNetworkError() {
+  console.log('\n[Test Group] F1: isNetworkError Classification');
+
+  const { isNetworkError } = await import('./src/api.js');
+
+  // TypeError (fetch/reader 网络失败)
+  log('isNetworkError: TypeError', isNetworkError(new TypeError('Failed to fetch')));
+
+  // 普通 Error = API 错误，不是网络错误
+  log('isNetworkError: API Error → false', !isNetworkError(new Error('API rate limit exceeded')));
+  log('isNetworkError: HTTP 500 → false', !isNetworkError(new Error('HTTP 500')));
+
+  // 字符串 fallback 匹配
+  log('isNetworkError: NetworkError string', isNetworkError(new Error('NetworkError when attempting to fetch')));
+  log('isNetworkError: Load failed', isNetworkError(new Error('Load failed')));
+  log('isNetworkError: Network request failed', isNetworkError(new Error('Network request failed')));
+}
+
+async function testStreamDisconnectDetection() {
+  console.log('\n[Test Group] F1: Stream Disconnect Detection');
+
+  // 模拟 reader.read() 中途抛 TypeError（网络断连）
+  const mockBody = {
+    getReader() {
+      let readCount = 0;
+      return {
+        read() {
+          readCount++;
+          if (readCount <= 2) {
+            const value = new TextEncoder().encode(
+              `data: ${JSON.stringify({ type: 'chunk', text: 'partial' })}\n\n`
+            );
+            return Promise.resolve({ done: false, value });
+          }
+          return Promise.reject(new TypeError('network error'));
+        }
+      };
+    }
+  };
+
+  const mockResponse = { ok: true, status: 200, body: mockBody };
+  globalThis.fetch = () => Promise.resolve(mockResponse);
+
+  try {
+    const { streamRequest, isNetworkError } = await import('./src/api.js');
+    let errorCaught = null;
+    let partialText = '';
+    try {
+      await streamRequest('/api/test', {}, (chunk) => { partialText += chunk; });
+    } catch (e) {
+      errorCaught = e;
+    }
+    log('stream disconnect throws TypeError', errorCaught instanceof TypeError, errorCaught?.message);
+    log('stream disconnect classified as network', isNetworkError(errorCaught), 'should be true');
+    log('partial text received before disconnect', partialText === 'partialpartial', `got: "${partialText}"`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+async function testFetchRejectNetworkError() {
+  console.log('\n[Test Group] F1: Fetch Reject Network Error');
+
+  globalThis.fetch = () => Promise.reject(new TypeError('Failed to fetch'));
+
+  try {
+    const { streamRequest, isNetworkError } = await import('./src/api.js');
+    let errorCaught = null;
+    try {
+      await streamRequest('/api/test', {}, () => {});
+    } catch (e) {
+      errorCaught = e;
+    }
+    log('fetch reject is TypeError', errorCaught instanceof TypeError, errorCaught?.message);
+    log('fetch reject classified as network', isNetworkError(errorCaught), 'should be true');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+
+// ============================================================================
 // State.js Encryption / Decryption / Migration Tests
 // ============================================================================
 
@@ -2367,6 +2452,12 @@ async function main() {
     await testStreamRequestOnStreamResumed();
     await delay(100);
     await testPreprocessLibraryTimeoutParam();
+
+    // ========== F1 SSE 断连重试测试 ==========
+    console.log('\n--- F1 SSE 断连重试测试 ---');
+    await testIsNetworkError();
+    await testStreamDisconnectDetection();
+    await testFetchRejectNetworkError();
 
   } catch (err) {
     console.error('\nFATAL:', err.message);

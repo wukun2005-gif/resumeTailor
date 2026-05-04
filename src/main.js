@@ -1158,7 +1158,20 @@ async function doPreprocessChat() {
       const systemDiv = appendPreprocessChatBubble('system', `源文件: ${result.sourceTokens.toLocaleString()} tokens → 预处理后: ${result.digestTokens.toLocaleString()} tokens${result.fromCache ? ' (缓存命中)' : ''}${result.fallbackUsed ? ' (已回退本地预处理)' : ''}`);
     }
   } catch (e) {
-    aiDiv.textContent = '错误: ' + e.message;
+    if (api.isNetworkError(e)) {
+      aiDiv.textContent = '连接中断，发送失败';
+      preprocessChatMessages.pop();
+      const hist = els.preprocessChatHistory;
+      hist.removeChild(hist.lastChild);
+      hist.removeChild(hist.lastChild);
+      els.preprocessChatInput.value = msg;
+      const retryRow = document.createElement('div');
+      retryRow.className = 'chat-retry-row';
+      showRetryButton(retryRow, () => doPreprocessChat());
+      hist.appendChild(retryRow);
+    } else {
+      aiDiv.textContent = '错误: ' + e.message;
+    }
   } finally {
     unlockAllButtons();
   }
@@ -1180,6 +1193,22 @@ function autoResize(textarea) {
 
 function onResumeEdited() {
   updateGenerateBtn();
+}
+
+/**
+ * 在指定父元素中创建并追加重试按钮
+ */
+function showRetryButton(parent, retryFn) {
+  const btn = document.createElement('button');
+  btn.className = 'retry-btn';
+  btn.textContent = '重试';
+  btn.addEventListener('click', () => {
+    btn.disabled = true;
+    btn.textContent = '重试中...';
+    // 延迟执行，让用户看到"重试中"的过渡状态
+    setTimeout(() => { retryFn(); }, 600);
+  });
+  parent.appendChild(btn);
 }
 
 /**
@@ -2038,7 +2067,14 @@ async function doGenerate() {
       persistDraftState(true);
     }
   } catch (e) {
-    return alert('刷新素材库失败: ' + e.message);
+    if (api.isNetworkError(e)) {
+      els.resumeStatusAndToken.textContent = '连接中断';
+      els.resumeStatusAndToken.className = 'status-text error';
+      showRetryButton(els.resumeStatusAndToken, () => doGenerate());
+    } else {
+      els.resumeStatusAndToken.textContent = '刷新素材库失败: ' + e.message;
+    }
+    return;
   }
 
   const resume = baseResumeContent || els.manualResumeInput.value.trim();
@@ -2143,7 +2179,13 @@ async function doGenerate() {
     // Auto-save to library (save only resume body, not notes)
     await autoSaveToLibrary();
   } catch (e) {
-    els.resumeStatusAndToken.textContent = '生成失败: ' + e.message;
+    if (api.isNetworkError(e)) {
+      els.resumeStatusAndToken.textContent = '连接中断';
+      els.resumeStatusAndToken.className = 'status-text error';
+      showRetryButton(els.resumeStatusAndToken, () => doGenerate());
+    } else {
+      els.resumeStatusAndToken.textContent = '生成失败: ' + e.message;
+    }
     persistDraftState(true);
   } finally {
     unlockAllButtons();
@@ -2297,7 +2339,13 @@ async function doReview() {
     els.reviewStatusAndToken.textContent = 'Review 完成';
     persistDraftState(true);
   } catch (e) {
-    els.reviewStatusAndToken.textContent = 'Review 失败: ' + e.message;
+    if (api.isNetworkError(e)) {
+      els.reviewStatusAndToken.textContent = '连接中断';
+      els.reviewStatusAndToken.className = 'status-text error';
+      showRetryButton(els.reviewStatusAndToken, () => doReview());
+    } else {
+      els.reviewStatusAndToken.textContent = 'Review 失败: ' + e.message;
+    }
     persistDraftState(true);
   } finally {
     unlockAllButtons();
@@ -2510,7 +2558,13 @@ async function doApplyReview() {
       { role: 'assistant', content: updatedResume },
     ];
   } catch (e) {
-    els.resumeStatusAndToken.textContent = '更新失败: ' + e.message;
+    if (api.isNetworkError(e)) {
+      els.resumeStatusAndToken.textContent = '连接中断';
+      els.resumeStatusAndToken.className = 'status-text error';
+      showRetryButton(els.resumeStatusAndToken, () => doApplyReview());
+    } else {
+      els.resumeStatusAndToken.textContent = '更新失败: ' + e.message;
+    }
     persistDraftState(true);
   } finally {
     unlockAllButtons();
@@ -2570,7 +2624,20 @@ async function doGenChat() {
       persistDraftState(true);
     }
   } catch (e) {
-    aiDiv.textContent = '错误: ' + e.message;
+    if (api.isNetworkError(e)) {
+      aiDiv.textContent = '连接中断，发送失败';
+      genChatMessages.pop();
+      const hist = els.genChatHistory;
+      hist.removeChild(hist.lastChild);
+      hist.removeChild(hist.lastChild);
+      els.genChatInput.value = msg;
+      const retryRow = document.createElement('div');
+      retryRow.className = 'chat-retry-row';
+      showRetryButton(retryRow, () => doGenChat());
+      hist.appendChild(retryRow);
+    } else {
+      aiDiv.textContent = '错误: ' + e.message;
+    }
   } finally {
     unlockAllButtons();
   }
@@ -2632,7 +2699,20 @@ async function doChat() {
       persistDraftState(true);
     }
   } catch (e) {
-    aiDiv.textContent = '错误: ' + e.message;
+    if (api.isNetworkError(e)) {
+      aiDiv.textContent = '连接中断，发送失败';
+      chatMessages.pop();
+      const hist = els.chatHistory;
+      hist.removeChild(hist.lastChild);
+      hist.removeChild(hist.lastChild);
+      els.chatInput.value = msg;
+      const retryRow = document.createElement('div');
+      retryRow.className = 'chat-retry-row';
+      showRetryButton(retryRow, () => doChat());
+      hist.appendChild(retryRow);
+    } else {
+      aiDiv.textContent = '错误: ' + e.message;
+    }
   } finally {
     unlockAllButtons();
   }
@@ -2757,8 +2837,14 @@ async function doGenerateHtml() {
     ];
   } catch (e) {
     console.error(e);
-    els.htmlStatus.textContent = '生成失败: ' + e.message;
-    els.htmlStatus.className = 'status-text error';
+    if (api.isNetworkError(e)) {
+      els.htmlStatus.textContent = '连接中断';
+      els.htmlStatus.className = 'status-text error';
+      showRetryButton(els.htmlStatus, () => doGenerateHtml());
+    } else {
+      els.htmlStatus.textContent = '生成失败: ' + e.message;
+      els.htmlStatus.className = 'status-text error';
+    }
   } finally {
     unlockAllButtons();
   }
@@ -2866,7 +2952,20 @@ async function doHtmlChat() {
     }
   } catch (e) {
     aiDiv.classList.remove('loading');
-    aiDiv.textContent = '错误: ' + e.message;
+    if (api.isNetworkError(e)) {
+      aiDiv.textContent = '连接中断，发送失败';
+      htmlChatMessages.pop();
+      const hist = els.htmlChatHistory;
+      hist.removeChild(hist.lastChild);
+      hist.removeChild(hist.lastChild);
+      els.htmlChatInput.value = msg;
+      const retryRow = document.createElement('div');
+      retryRow.className = 'chat-retry-row';
+      showRetryButton(retryRow, () => doHtmlChat());
+      hist.appendChild(retryRow);
+    } else {
+      aiDiv.textContent = '错误: ' + e.message;
+    }
   } finally {
     unlockAllButtons();
   }

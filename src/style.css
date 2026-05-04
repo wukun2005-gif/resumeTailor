@@ -88,6 +88,9 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
 .status-text { font-size: 12px; color: #6b7280; }
 .status-text.success { color: #059669; }
 .status-text.error { color: #dc2626; }
+.retry-btn { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; padding: 4px 12px; font-size: 12px; margin-left: 8px; border-radius: 4px; cursor: pointer; font-weight: 500; }
+.retry-btn:hover { background: #fee2e2; border-color: #fca5a5; }
+.chat-retry-row { margin-top: 4px; text-align: left; }
 .status-text.warning { color: #d97706 !important; font-weight: 600; }
 .timeout-warning { color: #d97706 !important; font-style: italic; }
 .stream-timeout-warning { color: #d97706; font-size: 12px; margin-left: 8px; font-weight: 600; }

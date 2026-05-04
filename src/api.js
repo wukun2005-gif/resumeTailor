@@ -330,3 +330,16 @@ export async function setGeminiFallbackModels(models) {
   if (!res.ok) throw new Error(data.error || '保存 Gemini fallback 模型列表失败');
   return data;
 }
+
+/**
+ * 判断错误是否为网络断连（可重试），区分于服务端/API 错误。
+ * fetch() 和 reader.read() 网络失败抛 TypeError，服务端错误抛普通 Error。
+ */
+export function isNetworkError(err) {
+  if (err instanceof TypeError) return true;
+  const msg = err.message || '';
+  return msg.includes('Failed to fetch') ||
+         msg.includes('NetworkError') ||
+         msg.includes('Network request failed') ||
+         msg.includes('Load failed');
+}
