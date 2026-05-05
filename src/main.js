@@ -1066,9 +1066,18 @@ function bindEvents() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') persistDraftState(true);
   });
-  // Auto-resize chat textareas
+  // Auto-resize chat textareas (max 300px)
   for (const ta of [els.genChatInput, els.chatInput, els.htmlChatInput, els.preprocessChatInput]) {
-    if (ta) ta.addEventListener('input', () => autoResize(ta));
+    if (ta) ta.addEventListener('input', () => autoResize(ta, 300));
+  }
+  // Auto-resize instruction/JD textareas (max 600px)
+  const instructionTextareas = [els.jdInput, els.manualResumeInput, els.genInstructions, els.reviewInstructions, els.htmlInstructions, els.preprocessInstructions];
+  for (const ta of instructionTextareas) {
+    if (ta) ta.addEventListener('input', () => autoResize(ta, 600));
+  }
+  // Initial auto-resize for all auto-resizable textareas (handles persisted content)
+  for (const ta of [...[els.genChatInput, els.chatInput, els.htmlChatInput, els.preprocessChatInput], ...instructionTextareas]) {
+    if (ta) autoResize(ta, instructionTextareas.includes(ta) ? 600 : 300);
   }
   // AI 预处理开关事件
   if (els.useAiPreprocess) {
@@ -1200,9 +1209,9 @@ function appendPreprocessChatBubble(role, text) {
   return div;
 }
 
-function autoResize(textarea) {
+function autoResize(textarea, maxHeight = 300) {
   textarea.style.height = 'auto';
-  textarea.style.height = Math.min(textarea.scrollHeight, 300) + 'px';
+  textarea.style.height = Math.min(textarea.scrollHeight, maxHeight) + 'px';
 }
 
 function onResumeEdited() {
