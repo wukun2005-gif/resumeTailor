@@ -282,7 +282,7 @@
       </div>
 
       <!-- AI Preprocessing Instructions -->
-      <details class="collapsible" id="preprocessInstructionsSection" style="display:none">
+      <details class="collapsible remember-state" id="preprocessInstructionsSection" style="display:none">
         <summary>预处理指令（AI 处理素材库的注意事项）</summary>
         <div class="instruction-toolbar">
           <label class="btn-secondary btn-sm">
@@ -310,7 +310,7 @@
         <textarea id="manualResumeInput" rows="6" placeholder="在此粘贴简历文本内容..."></textarea>
       </div>
 
-      <details class="collapsible">
+      <details class="collapsible remember-state" id="genInstructionsDetails">
         <summary>生成指令（简历/求职信生成的注意事项）</summary>
         <div class="instruction-toolbar">
           <label class="btn-secondary btn-sm">
@@ -323,7 +323,7 @@
         <textarea id="genInstructions" rows="12" placeholder="输入生成简历和求职信时的注意事项和要求..."></textarea>
       </details>
 
-      <details class="collapsible">
+      <details class="collapsible remember-state" id="reviewInstructionsDetails">
         <summary>评审指令（简历评审的注意事项）</summary>
         <div class="instruction-toolbar">
           <label class="btn-secondary btn-sm">
@@ -336,7 +336,7 @@
         <textarea id="reviewInstructions" rows="8" placeholder="输入简历评审时的注意事项和要求..."></textarea>
       </details>
 
-      <details class="collapsible">
+      <details class="collapsible remember-state" id="htmlFormatDetails">
         <summary>HTML 格式指令（txt→HTML 转换的注意事项）</summary>
         <div class="instruction-toolbar">
           <label class="btn-secondary btn-sm">

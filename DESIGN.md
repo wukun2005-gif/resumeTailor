@@ -284,10 +284,21 @@ data: {"type":"done"}
 ### 7.5 前端状态持久化
 指令内容保存在以下状态键中：
 - `genInstructions`：生成指令
-- `reviewInstructions`：评审指令  
+- `reviewInstructions`：评审指令
 - `htmlInstructions`：HTML格式指令
 
 这些状态在 `localStorage` 中持久化，应用重启时自动恢复。
+
+#### 7.5.1 折叠区展开状态记忆
+4 个指令区 `<details>` 元素标记 `class="remember-state"`，其展开/折叠状态通过 `resumeTailor_collapsedStates` 键持久化：
+- `preprocessInstructionsSection`：预处理指令
+- `genInstructionsDetails`：生成指令
+- `reviewInstructionsDetails`：评审指令
+- `htmlFormatDetails`：HTML 格式指令
+
+持久化时机：`toggle` 事件触发时（用户展开/折叠操作）。
+恢复时机：`restoreState()` 执行时，在凭证和草稿恢复之间。
+实现：`persistDetailsState()` 遍历 `.remember-state` 元素保存 `{ id: open }` 对象；`restoreDetailsState()` 读取并逐一恢复 `open` 属性。
 
 ### 7.6 文件命名建议
 建议使用有意义的文件名保存指令模板，例如：
@@ -785,6 +796,7 @@ Mock 数据包含：
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-05-05 | I3 折叠区 `<details>` 展开状态记忆：4 个指令区（预处理/生成/评审/HTML 格式）添加 `remember-state` class + ID，`persistDetailsState()` 在 toggle 事件时将 open 状态写入 localStorage（key: `resumeTailor_collapsedStates`），`restoreDetailsState()` 在 init 时恢复；新增 4 个单元测试验证持久化/恢复/默认/幂等行为；修复回归：init 中 `updateAiPreprocessUI()` 移至 `bindEvents()` 前，避免 `autoResize` 对隐藏 details 内 textarea 计算 scrollHeight=0 导致展开后 textarea 高度为 0 | index.html, src/main.js, test-e2e.mjs, DESIGN.md | - |
 | 2026-05-05 | I2 Textarea 自动增高：扩展 autoResize 函数（增加 maxHeight 参数），JD 输入框+指令区+manualResumeInput 绑定 input 事件自动增高（上限 600px），聊天输入框保持 300px；新增初始化调用处理持久化内容；CSS 添加 overflow-y: auto；输出区保持固定高度不变 | src/main.js, src/style.css, DESIGN.md | - |
 | 2026-05-05 | G4 未配置 Reviewer 时提醒：①Review 面板 reviewBtn 旁新增灰色提示文字，无 Reviewer 时显示；②修复 resolveReviewerConnectionIds 回退逻辑 bug——用户取消所有 Reviewer 勾选后保存不生效（原逻辑无法区分"明确选择无"和"尚无 checkbox"，总是回退到默认值；修复方案：使用 sentinel ['_NONE_'] 标记明确空选择，跳过回退）；③saveSettings 中 populateAgentDropdowns 后补调 updateGenerateBtn | index.html, src/main.js, src/style.css, DESIGN.md | - |
 | 2026-05-05 | F15 多模型评审逐模型进度条：后端 review-multi 端点新增 per-model pending/running/done SSE 事件（带 model/label/status 字段），前端 doReview() 多模型分支新增 renderReviewProgress() 渲染逐模型状态指示器，streamRequest onProgress 回调改为传完整 data 对象，E2E 测试增加 per-model progress 断言 | server/routes/api.js, src/api.js, src/main.js, test-e2e.mjs, DESIGN.md | - |

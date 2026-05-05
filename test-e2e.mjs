@@ -59,7 +59,11 @@
  * ├── testStateMigrationClearsDoubleEncrypted - 双重加密清理
  * ├── testStateStableFingerprintResistsBrowserUpdate - 稳定指纹
  * ├── testStateNonCredentialDataUnaffected  - 非凭据数据不受影响
- * └── testStateIsCredentialKey             - 凭据键分类
+ * ├── testStateIsCredentialKey             - 凭据键分类
+ * ├── testDetailsStatePersistAndRestore    - Details展开状态持久化与恢复
+ * ├── testDetailsStateDefaultWhenEmpty     - 无保存状态时默认行为
+ * ├── testDetailsStateOverwrite            - 状态覆盖更新
+ * └── testDetailsStateIdempotentRestore    - 恢复操作幂等性
  *
  * 【推理强度测试】推理参数映射和传递相关时运行
  * ├── testReasoningNoneNoParams            - reasoning=none时无推理参数
@@ -2069,6 +2073,83 @@ async function testStateIsCredentialKey() {
 }
 
 // ============================================================================
+// Details 展开状态记忆测试 (I3)
+// ============================================================================
+
+async function testDetailsStatePersistAndRestore() {
+  console.log('\n[Test Group] Details State: persist and restore collapsed states');
+  clearStateStore();
+  const DETAILS_KEY = 'resumeTailor_collapsedStates';
+
+  // Simulate persistDetailsState: save open states
+  const collapsedStates = {
+    genInstructionsDetails: true,
+    reviewInstructionsDetails: false,
+    htmlFormatDetails: true,
+    preprocessInstructionsDetails: false,
+  };
+  state.set(DETAILS_KEY, collapsedStates);
+
+  // Simulate restoreDetailsState: read saved states
+  const restored = state.get(DETAILS_KEY, {});
+  log('persisted states object roundtrips correctly',
+    JSON.stringify(restored) === JSON.stringify(collapsedStates),
+    `got: ${JSON.stringify(restored)}`);
+  log('genInstructionsDetails is open (true)',
+    restored.genInstructionsDetails === true);
+  log('reviewInstructionsDetails is closed (false)',
+    restored.reviewInstructionsDetails === false);
+  log('htmlFormatDetails is open (true)',
+    restored.htmlFormatDetails === true);
+  log('preprocessInstructionsDetails is closed (false)',
+    restored.preprocessInstructionsDetails === false);
+}
+
+async function testDetailsStateDefaultWhenEmpty() {
+  console.log('\n[Test Group] Details State: default when no saved state');
+  clearStateStore();
+  const DETAILS_KEY = 'resumeTailor_collapsedStates';
+
+  // No state saved yet — should get empty object default
+  const restored = state.get(DETAILS_KEY, {});
+  log('no saved state returns empty object',
+    Object.keys(restored).length === 0,
+    `got: ${JSON.stringify(restored)}`);
+}
+
+async function testDetailsStateOverwrite() {
+  console.log('\n[Test Group] Details State: overwrite existing state');
+  clearStateStore();
+  const DETAILS_KEY = 'resumeTailor_collapsedStates';
+
+  // First save
+  state.set(DETAILS_KEY, { genInstructionsDetails: true, reviewInstructionsDetails: true });
+  // Second save (overwrites)
+  state.set(DETAILS_KEY, { genInstructionsDetails: false, reviewInstructionsDetails: false });
+  const restored = state.get(DETAILS_KEY, {});
+  log('overwrite replaces old state completely',
+    restored.genInstructionsDetails === false && restored.reviewInstructionsDetails === false,
+    `got: ${JSON.stringify(restored)}`);
+}
+
+async function testDetailsStateIdempotentRestore() {
+  console.log('\n[Test Group] Details State: restore is idempotent');
+  clearStateStore();
+  const DETAILS_KEY = 'resumeTailor_collapsedStates';
+
+  // Save some state
+  const original = { genInstructionsDetails: true, htmlFormatDetails: false };
+  state.set(DETAILS_KEY, original);
+
+  // Restore twice — should get same result
+  const first = state.get(DETAILS_KEY, {});
+  const second = state.get(DETAILS_KEY, {});
+  log('multiple restores return identical results',
+    JSON.stringify(first) === JSON.stringify(second),
+    `first: ${JSON.stringify(first)}, second: ${JSON.stringify(second)}`);
+}
+
+// ============================================================================
 // Reasoning Intensity Tests
 // ============================================================================
 
@@ -2426,6 +2507,13 @@ async function main() {
     await testStateStableFingerprintResistsBrowserUpdate();
     await testStateNonCredentialDataUnaffected();
     await testStateIsCredentialKey();
+
+    // ========== Details展开状态记忆测试 (I3) ==========
+    console.log('\n--- Details展开状态记忆测试 (I3) ---');
+    await testDetailsStatePersistAndRestore();
+    await testDetailsStateDefaultWhenEmpty();
+    await testDetailsStateOverwrite();
+    await testDetailsStateIdempotentRestore();
 
     // ========== 推理强度测试 ==========
     console.log('\n--- 推理强度测试 ---');

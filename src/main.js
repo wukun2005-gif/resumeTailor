@@ -276,6 +276,29 @@ async function getJdOcrWorker(logger) {
 
 function persistDraftState() {}
 
+const DETAILS_COLLAPSED_KEY = 'resumeTailor_collapsedStates';
+
+function persistDetailsState() {
+  const detailsEls = document.querySelectorAll('.remember-state');
+  const collapsedStates = {};
+  detailsEls.forEach(el => {
+    if (el.id) {
+      collapsedStates[el.id] = el.open;
+    }
+  });
+  state.set(DETAILS_COLLAPSED_KEY, collapsedStates);
+}
+
+function restoreDetailsState() {
+  const collapsedStates = state.get(DETAILS_COLLAPSED_KEY, {});
+  const detailsEls = document.querySelectorAll('.remember-state');
+  detailsEls.forEach(el => {
+    if (el.id && el.id in collapsedStates) {
+      el.open = collapsedStates[el.id];
+    }
+  });
+}
+
 function clearWorkspaceState() {
   state.set('draftState', null);
 
@@ -832,11 +855,11 @@ async function loadGeminiFallbackModels() {
 /* ── Init ── */
 async function init() {
   await restoreState();
+  updateAiPreprocessUI(); // 初始化 AI 预处理 UI 状态（须在 bindEvents 前，否则 autoResize 对隐藏 details 内的 textarea 计算 scrollHeight=0）
   bindEvents();
   populateAgentDropdowns();
   restoreAgentAssignments();
   updateGenerateBtn();
-  updateAiPreprocessUI(); // 初始化 AI 预处理 UI 状态
   await loadGeminiFallbackModels(); // 加载 Gemini fallback 列表
   await autoInitAPI();
   if (els.libraryPath.value.trim()) {
@@ -958,6 +981,7 @@ async function restoreState() {
     await state.migrateCredential(k);
   }
 
+  restoreDetailsState();
   restoreDraftState();
 }
 
@@ -982,6 +1006,10 @@ function bindEvents() {
   els.settingsBtn.addEventListener('click', () => els.settingsModal.classList.add('open'));
   els.settingsClose.addEventListener('click', () => els.settingsModal.classList.remove('open'));
   els.settingsModal.addEventListener('click', e => { if (e.target === els.settingsModal) els.settingsModal.classList.remove('open'); });
+  // Remember details open/close state
+  document.querySelectorAll('.remember-state').forEach(el => {
+    el.addEventListener('toggle', persistDetailsState);
+  });
   els.settingsSave.addEventListener('click', saveSettings);
   els.browseLibraryBtn.addEventListener('click', browseLibrary);
   els.loadLibraryBtn.addEventListener('click', () => loadLibrary());
