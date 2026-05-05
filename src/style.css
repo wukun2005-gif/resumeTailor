@@ -61,7 +61,8 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
 .panel { flex: 1; min-width: 0; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; background: #fafafa; }
 .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .panel-header h3 { font-size: 14px; font-weight: 600; }
-.panel-actions { display: flex; gap: 6px; }
+.panel-actions { display: flex; gap: 6px; align-items: center; }
+.reviewer-hint { font-size: 12px; color: #9ca3af; font-style: italic; }
 .output-area { width: 100%; font-family: 'SF Mono', 'Menlo', 'Consolas', 'PingFang SC', monospace; font-size: 12.5px; line-height: 1.6; padding: 10px; border: 1px solid #d1d5db; border-radius: 4px; resize: vertical; background: #fff; }
 .save-filename { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; padding: 8px; background: #eff6ff; border-radius: 4px; }
 .save-filename input { flex: 1; padding: 4px 8px; border: 1px solid #93c5fd; border-radius: 4px; font-size: 13px; }

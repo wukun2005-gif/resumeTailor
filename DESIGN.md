@@ -785,6 +785,7 @@ Mock 数据包含：
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-05-05 | G4 未配置 Reviewer 时提醒：①Review 面板 reviewBtn 旁新增灰色提示文字，无 Reviewer 时显示；②修复 resolveReviewerConnectionIds 回退逻辑 bug——用户取消所有 Reviewer 勾选后保存不生效（原逻辑无法区分"明确选择无"和"尚无 checkbox"，总是回退到默认值；修复方案：使用 sentinel ['_NONE_'] 标记明确空选择，跳过回退）；③saveSettings 中 populateAgentDropdowns 后补调 updateGenerateBtn | index.html, src/main.js, src/style.css, DESIGN.md | - |
 | 2026-05-05 | F15 多模型评审逐模型进度条：后端 review-multi 端点新增 per-model pending/running/done SSE 事件（带 model/label/status 字段），前端 doReview() 多模型分支新增 renderReviewProgress() 渲染逐模型状态指示器，streamRequest onProgress 回调改为传完整 data 对象，E2E 测试增加 per-model progress 断言 | server/routes/api.js, src/api.js, src/main.js, test-e2e.mjs, DESIGN.md | - |
 | 2026-05-02 | C1 素材库加载状态提示：加载前显示"正在读取素材库..."，成功后显示"已加载 N 个文件，去重后 M 段"（通过 getLibraryDigest 计算去重段数），失败后红色错误提示 | src/main.js, DESIGN.md | - |
 | 2026-05-02 | C2 生成进度分阶段提示：doGenerate 流式过程展示四阶段提示 — ①"正在准备生成..."→②"正在向 AI 发送请求..."→③首 chunk 到达时"AI 正在生成简历..."→④流结束"正在自动保存到素材库..."，完成后由 formatUsage/已自动保存接管。通过 firstChunkReceived 标志在 onChunk 回调中实现首 chunk 检测 | src/main.js, DESIGN.md | - |

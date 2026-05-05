@@ -80,7 +80,7 @@ const els = {
    resumeOutput: $('resumeOutput'), resumeStatusAndToken: $('resumeStatusAndToken'), resumeTimeoutWarn: $('resumeTimeoutWarn'),
   saveResumeBtn: $('saveResumeBtn'), regenerateBtn: $('regenerateBtn'),
   saveFilenameRow: $('saveFilenameRow'), saveFilename: $('saveFilename'), confirmSaveBtn: $('confirmSaveBtn'), cancelSaveBtn: $('cancelSaveBtn'),
-   reviewBtn: $('reviewBtn'), reviewOutput: $('reviewOutput'), reviewStatusAndToken: $('reviewStatusAndToken'), reviewTimeoutWarn: $('reviewTimeoutWarn'),
+   reviewBtn: $('reviewBtn'), reviewerHint: $('reviewerHint'), reviewOutput: $('reviewOutput'), reviewStatusAndToken: $('reviewStatusAndToken'), reviewTimeoutWarn: $('reviewTimeoutWarn'),
   applyReviewBtn: $('applyReviewBtn'),
   chatHistory: $('chatHistory'), chatInput: $('chatInput'), chatSendBtn: $('chatSendBtn'),
   genNotesSection: $('genNotesSection'), genNotesOutput: $('genNotesOutput'),
@@ -385,6 +385,9 @@ function resolveReviewerConnectionIds(currentValues = [], savedValues = [], defa
   const configuredIds = getConfiguredConnectionIds();
   if (!configuredIds.length) return [];
 
+  // Sentinel: user explicitly unchecked all reviewers — respect the empty selection
+  if (currentValues.length === 1 && currentValues[0] === '_NONE_') return [];
+
   // 优先使用当前选择的值
   if (currentValues.length > 0) {
     const selected = [];
@@ -460,11 +463,17 @@ function getBestOrchestratorModelId() {
 
 function populateAgentDropdowns() {
   const configured = getConfiguredConnections();
+  // Capture checkbox state BEFORE clearing the DOM.
+  // If checkboxes exist but user unchecked all, we must respect the explicit empty selection
+  // instead of falling back to saved state (which would re-check old selections).
+  const reviewerCheckboxesExist = els.cfgAgentReviewers.querySelectorAll('input[type="checkbox"]').length > 0;
+  const prevReviewerValues = getSelectedReviewers();
   const prevSelections = {
     orchestratorValue: els.cfgAgentOrchestrator?.value,
     generatorValue: els.cfgAgentGenerator.value,
     htmlValue: els.cfgAgentHtml.value,
-    reviewerValues: getSelectedReviewers(),
+    // Sentinel ['_NONE_'] = checkboxes exist but nothing checked → explicit "no selection"
+    reviewerValues: (prevReviewerValues.length === 0 && reviewerCheckboxesExist) ? ['_NONE_'] : prevReviewerValues,
     preprocessorValue: els.cfgAgentPreprocessor?.value,
   };
   const bestOrchestratorId = getBestOrchestratorModelId();
@@ -499,7 +508,12 @@ function getHtmlModelId() {
 }
 
 function getReviewerModelIds() {
-  return resolveReviewerConnectionIds(getSelectedReviewers(), state.get('reviewerModels', ['google-studio-google']), 'google-studio-google');
+  const selected = getSelectedReviewers();
+  const checkboxesExist = els.cfgAgentReviewers.querySelectorAll('input[type="checkbox"]').length > 0;
+  // If reviewer checkboxes exist in DOM but nothing is checked, user explicitly chose no reviewer.
+  // Use sentinel to prevent resolveReviewerConnectionIds from falling back to defaults.
+  const currentValues = (selected.length === 0 && checkboxesExist) ? ['_NONE_'] : selected;
+  return resolveReviewerConnectionIds(currentValues, state.get('reviewerModels', ['google-studio-google']), 'google-studio-google');
 }
 
 function getJdAnalysisModelId() {
@@ -1278,6 +1292,7 @@ function updateGenerateBtn() {
   els.regenerateBtn.disabled = isStreaming;
   els.generateHtmlBtn.disabled = !els.resumeOutput.value.trim() || isStreaming || (!els.mockMode.checked && !hasHtml);
   els.reviewBtn.disabled = !els.resumeOutput.value.trim() || isStreaming || (!els.mockMode.checked && !hasReviewer);
+  els.reviewerHint.style.display = hasReviewer ? 'none' : '';
   els.applyReviewBtn.disabled = isStreaming || !els.reviewOutput.value.trim();
   els.saveResumeBtn.disabled = isStreaming || !els.resumeOutput.value.trim();
 }
@@ -1316,6 +1331,7 @@ async function saveSettings() {
   }
 
   const assignments = populateAgentDropdowns();
+  updateGenerateBtn();
   state.set('orchestratorModel', assignments.orchestratorModel);
   state.set('generatorModel', assignments.generatorModel);
   state.set('reviewerModels', assignments.reviewerModels);
