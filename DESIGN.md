@@ -195,6 +195,8 @@ connectionId === 'jiekou-anthropic'      → Anthropic SDK (anthropic.js)
 ### SSE 数据格式
 ```
 data: {"type":"chunk","text":"..."}
+data: {"type":"progress","text":"..."}                                // 聚合进度文本
+data: {"type":"progress","model":"conn-id","label":"Gemini","status":"pending|running|done"}  // per-model 进度（review-multi）
 data: {"type":"error","message":"..."}
 data: {"type":"done"}
 ```
@@ -310,6 +312,7 @@ data: {"type":"done"}
 ### 8.3 `getReviewMergePrompt`
 - 用于多 Reviewer 场景：多个模型并行评审后，由内部编排层默认复用首个 Reviewer 模型合并评审意见
 - 使用实际的 connection label 标识各评审员
+- 后端为每个模型发出 per-model 进度事件（pending → running → done），前端逐模型渲染状态指示器
 
 ### 8.4 `getHtmlGenerationPrompt`
 - 硬性要求：2 页 A4 以内、CSS @page 规则、紧凑排版
@@ -782,6 +785,7 @@ Mock 数据包含：
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-05-05 | F15 多模型评审逐模型进度条：后端 review-multi 端点新增 per-model pending/running/done SSE 事件（带 model/label/status 字段），前端 doReview() 多模型分支新增 renderReviewProgress() 渲染逐模型状态指示器，streamRequest onProgress 回调改为传完整 data 对象，E2E 测试增加 per-model progress 断言 | server/routes/api.js, src/api.js, src/main.js, test-e2e.mjs, DESIGN.md | - |
 | 2026-05-02 | C1 素材库加载状态提示：加载前显示"正在读取素材库..."，成功后显示"已加载 N 个文件，去重后 M 段"（通过 getLibraryDigest 计算去重段数），失败后红色错误提示 | src/main.js, DESIGN.md | - |
 | 2026-05-02 | C2 生成进度分阶段提示：doGenerate 流式过程展示四阶段提示 — ①"正在准备生成..."→②"正在向 AI 发送请求..."→③首 chunk 到达时"AI 正在生成简历..."→④流结束"正在自动保存到素材库..."，完成后由 formatUsage/已自动保存接管。通过 firstChunkReceived 标志在 onChunk 回调中实现首 chunk 检测 | src/main.js, DESIGN.md | - |
 | 2026-04-29 | 流式操作期间禁止重复操作：①新增 lockAllButtons/unlockAllButtons 集中管理函数；②流式期间禁用所有主操作按钮（生成/重新生成/Review/采纳更新/生成HTML/保存）、对话发送按钮、素材库操作按钮；③复用 sessionTotalInfo 显示"AI 正在处理，请稍候..."蓝色提示；④所有流式操作在 finally 块统一调用 unlockAllButtons 恢复状态 | src/main.js, DESIGN.md | - |

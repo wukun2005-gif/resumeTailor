@@ -285,13 +285,14 @@ function parseSSEText(text) {
   let model = null;
   let fromCache = null;
   let progress = [];
+  let progressEvents = [];
 
   for (const line of text.split('\n')) {
     if (!line.startsWith('data: ')) continue;
     try {
       const data = JSON.parse(line.slice(6));
       if (data.type === 'chunk') result += data.text || '';
-      if (data.type === 'progress') progress.push(data.text || '');
+      if (data.type === 'progress') { progress.push(data.text || ''); progressEvents.push(data); }
       if (data.type === 'error') error = data.message || '未知错误';
       if (data.type === 'done') {
         usage = data.usage || null;
@@ -301,7 +302,7 @@ function parseSSEText(text) {
     } catch {}
   }
 
-  return { text: result, error, usage, model, fromCache, progress };
+  return { text: result, error, usage, model, fromCache, progress, progressEvents };
 }
 
 function isModelQuotaError(text = '') {
@@ -558,6 +559,13 @@ async function testReviewMulti(generatedResume) {
   log('/review-multi has progress events', result.progress.length > 0, `progress=${JSON.stringify(result.progress)}`);
   log('/review-multi progress starts with total count', result.progress.some(p => /共\s*\d+\s*个模型/.test(p)), result.progress[0] || '(none)');
   log('/review-multi progress has completion count', result.progress.some(p => /已完成.*个模型评审/.test(p)), result.progress.find(p => /已完成/.test(p)) || '(none)');
+  // Per-model progress events (F15)
+  const perModelEvents = result.progressEvents.filter(e => e.model);
+  log('/review-multi has per-model progress events', perModelEvents.length > 0, `perModel=${perModelEvents.length}`);
+  log('/review-multi per-model events have label', perModelEvents.some(e => e.label), perModelEvents[0] ? JSON.stringify(perModelEvents[0]) : '(none)');
+  log('/review-multi per-model events have pending status', perModelEvents.some(e => e.status === 'pending'));
+  log('/review-multi per-model events have running status', perModelEvents.some(e => e.status === 'running'));
+  log('/review-multi per-model events have done status', perModelEvents.some(e => e.status === 'done'));
 }
 
 async function testApplyReview(reviewComments) {

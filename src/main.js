@@ -2245,6 +2245,16 @@ async function doSave() {
 }
 
 /* ── Review ── */
+const REVIEW_STATUS_ICONS = { pending: '⏳ 排队中', running: '  进行中', done: '✓ 完成' };
+function renderReviewProgress(modelStatus, el) {
+  const parts = [];
+  for (const [, info] of modelStatus) {
+    const icon = REVIEW_STATUS_ICONS[info.status] || info.status;
+    parts.push(`${info.label || '...'}: ${icon}`);
+  }
+  el.innerHTML = parts.join(' &nbsp;|&nbsp; ');
+}
+
 async function doReview() {
   const resume = els.resumeOutput.value.trim();
   if (!resume) return alert('请先生成简历');
@@ -2288,6 +2298,9 @@ async function doReview() {
     let result;
     if (reviewerModels.length > 1) {
       // Multi-reviewer: parallel review + merge
+      const modelStatus = new Map();
+      reviewerModels.forEach(id => modelStatus.set(id, { label: '', status: 'pending' }));
+      renderReviewProgress(modelStatus, els.reviewStatusAndToken);
       result = await api.streamRequest('/api/review-multi', {
         ...reviewPayload,
         models: reviewerModels,
@@ -2297,8 +2310,13 @@ async function doReview() {
         els.reviewOutput.value = full;
         els.reviewOutput.scrollTop = els.reviewOutput.scrollHeight;
         persistDraftState();
-      }, (progressText) => {
-        els.reviewStatusAndToken.textContent = progressText;
+      }, (progressData) => {
+        if (progressData.model) {
+          modelStatus.set(progressData.model, { label: progressData.label, status: progressData.status });
+          renderReviewProgress(modelStatus, els.reviewStatusAndToken);
+        } else {
+          els.reviewStatusAndToken.textContent = progressData.text;
+        }
       }, () => {
         els.reviewTimeoutWarn.style.display = '';
       }, () => {

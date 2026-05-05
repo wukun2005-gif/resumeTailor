@@ -377,11 +377,22 @@ router.post('/review-multi', async (req, res) => {
   if (req.body.mock) {
     const hasCoverLetter = (req.body.updatedResume || '').includes('求职信');
     setupSSE(res);
-    const mockTotal = (req.body.models || []).length || 2;
+    const mockModels = (req.body.models || []);
+    const mockTotal = mockModels.length || 2;
     sendSSE(res, { type: 'chunk', text: '正在并行调用多个评审模型...\n\n' });
+    // Per-model pending events (use actual model IDs so frontend map keys match)
+    for (let i = 0; i < mockTotal; i++) {
+      const modelId = mockModels[i] || `mock-${i}`;
+      const label = getConnectionLabel(modelId);
+      sendSSE(res, { type: 'progress', model: modelId, label, status: 'pending' });
+    }
     sendSSE(res, { type: 'progress', text: `正在启动并行评审（共 ${mockTotal} 个模型）...` });
-    for (let i = 1; i <= mockTotal; i++) {
-      sendSSE(res, { type: 'progress', text: `已完成 ${i}/${mockTotal} 个模型评审，正在进行合并...` });
+    for (let i = 0; i < mockTotal; i++) {
+      const modelId = mockModels[i] || `mock-${i}`;
+      const label = getConnectionLabel(modelId);
+      sendSSE(res, { type: 'progress', model: modelId, label, status: 'running' });
+      sendSSE(res, { type: 'progress', model: modelId, label, status: 'done' });
+      sendSSE(res, { type: 'progress', text: `已完成 ${i + 1}/${mockTotal} 个模型评审，正在进行合并...` });
     }
     sendSSE(res, { type: 'chunk', text: '--- 正在合并评审意见 ---\n\n' });
     const mockText = MOCK.reviewMerge + (hasCoverLetter ? MOCK.reviewMergeCoverLetter : '');
@@ -400,15 +411,21 @@ router.post('/review-multi', async (req, res) => {
     const resolvedReasoning = resolveReasoning(reasoning, '/review-multi');
     const { system, user, userBlocks } = getReviewPromptConcise({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted });
 
-    // Run all reviewers in parallel with progress tracking
+    // Run all reviewers in parallel with per-model progress tracking
     const total = models.length;
     let completed = 0;
     sendSSE(res, { type: 'chunk', text: '正在并行调用多个评审模型...\n\n' });
+    // Emit per-model pending events
+    models.forEach(model => {
+      sendSSE(res, { type: 'progress', model, label: getConnectionLabel(model), status: 'pending' });
+    });
     sendSSE(res, { type: 'progress', text: `正在启动并行评审（共 ${total} 个模型）...` });
     const results = await Promise.all(models.map(async (model) => {
+      sendSSE(res, { type: 'progress', model, label: getConnectionLabel(model), status: 'running' });
       const caller = getModelCaller(model);
       const result = await caller(user, () => {}, { system, maxTokens: 3072, userBlocks, reasoning: resolvedReasoning });
       completed++;
+      sendSSE(res, { type: 'progress', model, label: getConnectionLabel(model), status: 'done' });
       sendSSE(res, { type: 'progress', text: `已完成 ${completed}/${total} 个模型评审，正在进行合并...` });
       return { model, text: result.text, usage: result.usage };
     }));
