@@ -316,7 +316,7 @@ router.post('/generate', async (req, res) => {
   if (req.body.mock) {
     let mockText = MOCK.resume;
     if (req.body.generateCoverLetter) mockText += MOCK.coverLetter;
-    mockText += MOCK.notes;
+    if (req.body.generateNotes !== false) mockText += MOCK.notes;
     return streamMock(res, mockText, req.body._testDelayMs || 12);
   }
   setupSSE(res);
