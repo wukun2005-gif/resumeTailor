@@ -8,3 +8,4 @@ config/user-models.json
 artifacts/
 backlog.md
 CLAUDE.md
+.claude/settings.local.json

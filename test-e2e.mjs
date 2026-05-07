@@ -1418,7 +1418,7 @@ async function testPiiReview(generatedResume) {
     model: MODEL,
     jd: SAMPLE_JD,
     baseResume: PII_SAMPLE_RESUME,
-    updatedResume: generatedResume,
+    updatedResume: generatedResume || PII_SAMPLE_RESUME,
     resumeLibrary: [],
     instructions: '',
     reviewInstructions: '',
@@ -2849,188 +2849,201 @@ async function testModelFallbackLogic() {
 async function main() {
   const args = process.argv.slice(2);
   const piiOnly = args.includes('--pii-only');
+  const onlyIdx = args.indexOf('--only');
+  const onlyPattern = onlyIdx !== -1 ? (args[onlyIdx + 1] || '').toLowerCase() : '';
 
   console.log('\n=== Resume Tailor E2E Tests ===\n');
   if (piiOnly) {
     console.log('模式：仅运行 PII 功能测试\n');
+  } else if (onlyPattern) {
+    console.log(`模式：仅运行匹配 "${onlyPattern}" 的测试\n`);
   } else {
     console.log('提示：可根据开发功能选择运行特定测试组，详见文件头部注释\n');
+  }
+
+  // --only 过滤器：按函数名子串匹配，不匹配则跳过
+  function maybe(fn, ...args) {
+    if (!onlyPattern) return Reflect.apply(fn, null, args);
+    const name = fn.name.toLowerCase();
+    if (name.includes(onlyPattern)) return Reflect.apply(fn, null, args);
+    console.log(`  ⏭ skipped ${fn.name}`);
+    return undefined;
   }
 
   try {
     if (piiOnly) {
       // ========== PII功能测试 ==========
       console.log('\n--- PII功能测试 ---');
-      await testInitPii();
+      await maybe(testInitPii);
       await delay(RATE_LIMIT_DELAY);
-      const piiGenerated = await testPiiGenerate();
+      const piiGenerated = await maybe(testPiiGenerate);
       await delay(RATE_LIMIT_DELAY);
-      await testPiiReview(piiGenerated);
+      await maybe(testPiiReview, piiGenerated);
       await delay(RATE_LIMIT_DELAY);
-      await testPiiChat();
+      await maybe(testPiiChat);
       await delay(RATE_LIMIT_DELAY);
-      await testPiiGenerateHtml();
+      await maybe(testPiiGenerateHtml);
     } else {
     // ========== 核心流程测试 ==========
     console.log('\n--- 核心流程测试 ---');
-    await testInitBase();
-    await testInitBackwardCompat();
+    await maybe(testInitBase);
+    await maybe(testInitBackwardCompat);
     await delay(RATE_LIMIT_DELAY);
-    const generated = await testGenerate();
-    await testGenerateNoNotes();
-    await testPreviouslySubmittedDetection();
+    const generated = await maybe(testGenerate);
+    await maybe(testGenerateNoNotes);
+    await maybe(testPreviouslySubmittedDetection);
     await delay(RATE_LIMIT_DELAY);
-    await testGenerateHtml();
-    await testGenerateHtmlWithHyperlinks();
+    await maybe(testGenerateHtml);
+    await maybe(testGenerateHtmlWithHyperlinks);
     await delay(RATE_LIMIT_DELAY);
-    const review = await testReview(generated);
+    const review = await maybe(testReview, generated);
     await delay(RATE_LIMIT_DELAY);
-    await testReviewWithInstructions(generated);
+    await maybe(testReviewWithInstructions, generated);
     await delay(RATE_LIMIT_DELAY);
-    await testReviewMulti(generated);
+    await maybe(testReviewMulti, generated);
     await delay(RATE_LIMIT_DELAY);
-    await testApplyReview(review);
+    await maybe(testApplyReview, review);
     await delay(RATE_LIMIT_DELAY);
-    await testReviewChat();
-    await testChatGeneratorType();
-    await testChatHtmlType();
-    await testChatUndefinedType();
+    await maybe(testReviewChat);
+    await maybe(testChatGeneratorType);
+    await maybe(testChatHtmlType);
+    await maybe(testChatUndefinedType);
     await delay(RATE_LIMIT_DELAY);
-    await testConnectionFallbackWithoutModel();
+    await maybe(testConnectionFallbackWithoutModel);
 
     // ========== JD解析测试 ==========
     console.log('\n--- JD解析测试 ---');
     await delay(RATE_LIMIT_DELAY);
-    await testExtractJdInfo();
-    await testExtractJdInfoLocalFallback();
-    await testExtractJdInfoAiFailureFallback();
+    await maybe(testExtractJdInfo);
+    await maybe(testExtractJdInfoLocalFallback);
+    await maybe(testExtractJdInfoAiFailureFallback);
     await delay(RATE_LIMIT_DELAY);
-    await testMockJdImageOcr();
-    await testJdImageOcrValidation();
+    await maybe(testMockJdImageOcr);
+    await maybe(testJdImageOcrValidation);
 
     // ========== 模型管理测试 ==========
     console.log('\n--- 模型管理测试 ---');
     await delay(RATE_LIMIT_DELAY);
-    await testListModels();
-    await testListModelsWithInputKeyOverride();
-    
+    await maybe(testListModels);
+    await maybe(testListModelsWithInputKeyOverride);
+
     // ========== Gemini Fallback 配置管理测试 ==========
     console.log('\n--- Gemini Fallback 配置管理测试 ---');
-    await testGetGeminiFallbackModels();
-    await testSetGeminiFallbackModels();
-    await testResetGeminiFallbackToDefaults();
-    await testGeminiFallbackInvalidInput();
+    await maybe(testGetGeminiFallbackModels);
+    await maybe(testSetGeminiFallbackModels);
+    await maybe(testResetGeminiFallbackToDefaults);
+    await maybe(testGeminiFallbackInvalidInput);
 
     // ========== 文件操作测试 ==========
     console.log('\n--- 文件操作测试 ---');
     await delay(RATE_LIMIT_DELAY);
-    await testFileRoutesAndDigest();
-    await testDigestNoBlanksDedup();
-    await testDigestLayeredDedup();
-    
+    await maybe(testFileRoutesAndDigest);
+    await maybe(testDigestNoBlanksDedup);
+    await maybe(testDigestLayeredDedup);
+
     // ========== 本地预处理优化测试 ==========
     console.log('\n--- 本地预处理优化测试 ---');
     await delay(RATE_LIMIT_DELAY);
-    await testDigestJdParagraphFiltering();
-    await testDigestFullPreserveExactNames();
-    await testDigestJdDominantParagraphFiltered();
-    await testDigestBoilerplateFiltering();
-    await testDigestCacheVersionUpgrade();
-    await testDigestPreservedFileNotDeduped();
-    await testDigestActionVerbBlockSplit();
+    await maybe(testDigestJdParagraphFiltering);
+    await maybe(testDigestFullPreserveExactNames);
+    await maybe(testDigestJdDominantParagraphFiltered);
+    await maybe(testDigestBoilerplateFiltering);
+    await maybe(testDigestCacheVersionUpgrade);
+    await maybe(testDigestPreservedFileNotDeduped);
+    await maybe(testDigestActionVerbBlockSplit);
 
     // ========== PII功能测试 ==========
     console.log('\n--- PII功能测试 ---');
     await delay(RATE_LIMIT_DELAY);
-    await testInitPii();
+    await maybe(testInitPii);
     await delay(RATE_LIMIT_DELAY);
-    const piiGenerated = await testPiiGenerate();
+    const piiGenerated = await maybe(testPiiGenerate);
     await delay(RATE_LIMIT_DELAY);
-    await testPiiReview(piiGenerated);
+    await maybe(testPiiReview, piiGenerated);
     await delay(RATE_LIMIT_DELAY);
-    await testPiiChat();
+    await maybe(testPiiChat);
     await delay(RATE_LIMIT_DELAY);
-    await testPiiGenerateHtml();
+    await maybe(testPiiGenerateHtml);
 
     } // end else (full test suite)
 
     // ========== OpenAI-Compat缓存测试 ==========
     console.log('\n--- OpenAI-Compat缓存测试 ---');
-    await testAnthropicCachingHeaders();
+    await maybe(testAnthropicCachingHeaders);
     await delay(100);
-    await testNonAnthropicNoCachingHeaders();
+    await maybe(testNonAnthropicNoCachingHeaders);
     await delay(100);
-    await testJiekouAnthropicModelDetection();
+    await maybe(testJiekouAnthropicModelDetection);
     await delay(100);
-    await testClaudeInModelNameDetection();
+    await maybe(testClaudeInModelNameDetection);
     await delay(100);
-    await testUserBlocksWithoutCache();
+    await maybe(testUserBlocksWithoutCache);
     await delay(100);
-    await testConnectionIdAnthropicDetection();
+    await maybe(testConnectionIdAnthropicDetection);
 
     // ========== State.js加密测试 ==========
     console.log('\n--- State.js加密测试 ---');
-    await testStateEncryptDecryptRoundtrip();
-    await testStateDecryptEmptyOrMissing();
-    await testStateDecryptFailureReturnsEmpty();
-    await testStateLooksLikeCiphertext();
-    await testStateLegacyFingerprintMigration();
-    await testStateMigrationClearsDoubleEncrypted();
-    await testStateStableFingerprintResistsBrowserUpdate();
-    await testStateNonCredentialDataUnaffected();
-    await testStateIsCredentialKey();
+    await maybe(testStateEncryptDecryptRoundtrip);
+    await maybe(testStateDecryptEmptyOrMissing);
+    await maybe(testStateDecryptFailureReturnsEmpty);
+    await maybe(testStateLooksLikeCiphertext);
+    await maybe(testStateLegacyFingerprintMigration);
+    await maybe(testStateMigrationClearsDoubleEncrypted);
+    await maybe(testStateStableFingerprintResistsBrowserUpdate);
+    await maybe(testStateNonCredentialDataUnaffected);
+    await maybe(testStateIsCredentialKey);
 
     // ========== Details展开状态记忆测试 (I3) ==========
     console.log('\n--- Details展开状态记忆测试 (I3) ---');
-    await testDetailsStatePersistAndRestore();
-    await testDetailsStateDefaultWhenEmpty();
-    await testDetailsStateOverwrite();
-    await testDetailsStateIdempotentRestore();
+    await maybe(testDetailsStatePersistAndRestore);
+    await maybe(testDetailsStateDefaultWhenEmpty);
+    await maybe(testDetailsStateOverwrite);
+    await maybe(testDetailsStateIdempotentRestore);
 
     // ========== 推理强度测试 ==========
     console.log('\n--- 推理强度测试 ---');
-    await testReasoningNoneNoParams();
-    await testReasoningLowOpenRouter();
-    await testReasoningMediumOpenRouter();
-    await testReasoningHighOpenRouter();
-    await testReasoningOpenAICompatEffort();
-    await testReasoningNoneOpenAICompat();
-    await testReasoningInvalidValue();
-    await testReasoningNonCreativeOverride();
-    await testGenerateWithReasoning();
-    await testGenerateWithoutReasoning();
-    await testReviewWithReasoning();
+    await maybe(testReasoningNoneNoParams);
+    await maybe(testReasoningLowOpenRouter);
+    await maybe(testReasoningMediumOpenRouter);
+    await maybe(testReasoningHighOpenRouter);
+    await maybe(testReasoningOpenAICompatEffort);
+    await maybe(testReasoningNoneOpenAICompat);
+    await maybe(testReasoningInvalidValue);
+    await maybe(testReasoningNonCreativeOverride);
+    await maybe(testGenerateWithReasoning);
+    await maybe(testGenerateWithoutReasoning);
+    await maybe(testReviewWithReasoning);
 
     // ========== AI预处理测试 ==========
     console.log('\n--- AI预处理测试 ---');
     await delay(RATE_LIMIT_DELAY);
-    await testAiPreprocessLibrary();
-    await testPreprocessLibrary();
-    await testPreprocessLibraryExcludeNames();
+    await maybe(testAiPreprocessLibrary);
+    await maybe(testPreprocessLibrary);
+    await maybe(testPreprocessLibraryExcludeNames);
     await delay(RATE_LIMIT_DELAY);
-    await testAiPreprocessRealApi();
+    await maybe(testAiPreprocessRealApi);
 
     // ========== C5 超时提示测试 ==========
     console.log('\n--- C5 超时提示测试 ---');
-    await testStreamRequestNormalFlow();
+    await maybe(testStreamRequestNormalFlow);
     await delay(100);
-    await testStreamRequestTimeoutAfterFirstChunk();
+    await maybe(testStreamRequestTimeoutAfterFirstChunk);
     await delay(100);
-    await testStreamRequestOnStreamResumed();
+    await maybe(testStreamRequestOnStreamResumed);
     await delay(100);
-    await testPreprocessLibraryTimeoutParam();
+    await maybe(testPreprocessLibraryTimeoutParam);
 
     // ========== F1 SSE 断连重试测试 ==========
     console.log('\n--- F1 SSE 断连重试测试 ---');
-    await testIsNetworkError();
-    await testStreamDisconnectDetection();
-    await testFetchRejectNetworkError();
+    await maybe(testIsNetworkError);
+    await maybe(testStreamDisconnectDetection);
+    await maybe(testFetchRejectNetworkError);
 
     // ========== 单元测试（无需服务器） ==========
     console.log('\n--- 单元测试 ---');
-    await testStreamRestorerCrossChunk();
-    await testPiiMultiValue();
-    await testModelFallbackLogic();
+    await maybe(testStreamRestorerCrossChunk);
+    await maybe(testPiiMultiValue);
+    await maybe(testModelFallbackLogic);
 
   } catch (err) {
     console.error('\nFATAL:', err.message);
