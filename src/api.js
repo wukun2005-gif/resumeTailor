@@ -343,3 +343,33 @@ export function isNetworkError(err) {
          msg.includes('Network request failed') ||
          msg.includes('Load failed');
 }
+
+/**
+ * Intent routing — classify user query as analyze/generate/clarify.
+ * Non-streaming, lightweight call.
+ */
+export async function routeIntent(model, query, jd, mock = false) {
+  const res = await fetch('/api/route-intent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, query, jd, mock }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '意图识别失败');
+  return data;
+}
+
+/**
+ * JD Analyzer — analyze JD against resume library, return structured match report.
+ * Non-streaming.
+ */
+export async function analyzeJd(model, jd, resumeLibrary, mock = false) {
+  const res = await fetch('/api/analyze-jd', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, jd, resumeLibrary, mock }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'JD 分析失败');
+  return data;
+}

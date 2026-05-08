@@ -186,7 +186,7 @@ flowchart LR
 
 | Agent / 编排层 | 职责 | 推荐模型 |
 |-------|------|---------|
-| **内部编排层** | 流程协调、JD解析路由、多评审合并 | 不单独配置，默认复用 Generator / Reviewer |
+| **Orchestrator** | 意图路由（分析/生成/澄清）；JD深度拆解+素材库匹配度评估 | 默认复用 Generator |
 | **Generator** | 生成定制简历和求职信；JD解析AI兜底 | 旗舰推理模型 |
 | **Reviewer × N** | 独立评审+打分（支持多个模型并行） | 多种模型混搭 |
 | **Format Converter** | 纯文本→可打印HTML；JD图片OCR兜底 | 免费/轻量模型 |
@@ -241,6 +241,8 @@ flowchart TD
 
     LIB[(本地简历素材库)] -->|自动读取全部素材| INPUT
     INPUT["输入JD / 选择基础简历 / 编写指令"]
+    INPUT -->|可选：点击'分析 JD'| ANALYZE["Orchestrator - 意图路由 + JD 匹配度分析"]
+    ANALYZE -->|分析结果自动注入生成指令| CONSIST
     INPUT -->|点击'生成简历'| CONSIST
 
     CONSIST{"素材库有同公司历史投递?"}
@@ -273,6 +275,7 @@ flowchart TD
     style LIB fill:#fff3cd,stroke:#ffc107
     style WARN fill:#fff3cd,stroke:#ffc107
     style GEN fill:#e0f2fe,stroke:#0ea5e9
+    style ANALYZE fill:#f3e8ff,stroke:#a855f7
     style REVIEW fill:#fef3c7,stroke:#f59e0b
     style APPLY fill:#e0f2fe,stroke:#0ea5e9
     style HTML fill:#dcfce7,stroke:#22c55e
@@ -324,6 +327,10 @@ Resume Tailor 通过三层机制管理 AI 的不确定性和成本：
 
 加载素材库 → 导出预处理文本（可选AI预处理）→ 用于其他AI工具。
 
+### 场景6：生成前评估JD匹配度
+
+粘贴JD → 点击「分析 JD」→ Orchestrator 先做意图路由，再深度拆解硬性要求/加分项，对照素材库给出匹配度（有戏/勉强/没戏）、优势区和短板区 → 分析结果自动注入生成指令，引导 Generator 侧重点。
+
 ---
 
 ## 7. 安全与隐私
@@ -372,7 +379,9 @@ Agent自动搜索JD → 生成简历 → 自动投递；AI模拟面试官 + 众�
 |------|------|
 | **JD** | Job Description，职位描述 |
 | **素材库** | 用户本地文件夹，包含简历、求职信和职业素材 |
-| **Agent** | 负责特定任务的AI角色（生成/评审/转换） |
+| **Agent** | 负责特定任务的AI角色（编排/生成/评审/转换） |
+| **Orchestrator** | 编排Agent——意图路由（分析/生成/澄清）+ JD深度拆解与匹配度评估 |
+| **JD Analyzer** | Orchestrator 的子功能：对照素材库分析JD匹配度，输出硬性要求、加分项、优势/短板、匹配度判断 |
 | **连接** | 一组已配置的API凭证（供应商 + URL + Key + Model ID） |
 | **Generator** | 生成Agent——生成定制简历和求职信 |
 | **Reviewer** | 评审Agent——评审简历并打分（支持多个并行） |

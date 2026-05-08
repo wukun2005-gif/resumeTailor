@@ -353,8 +353,17 @@
         <label class="checkbox-label">
           <input type="checkbox" id="generateCoverLetter"> 同时生成求职信
         </label>
-        <button id="generateBtn" class="btn-primary btn-lg" disabled>生成简历</button>
+        <div>
+          <button id="analyzeJdBtn" class="btn-secondary btn-lg">分析 JD</button>
+          <button id="generateBtn" class="btn-primary btn-lg" disabled>生成简历</button>
+        </div>
       </div>
+
+      <!-- JD Analysis Report (collapsible) -->
+      <details id="jdAnalysisSection" style="display:none" class="remember-state">
+        <summary>JD 分析报告<span id="jdAnalysisStatus" style="font-size:0.85rem;color:#666;margin-left:12px;"></span></summary>
+        <div id="jdAnalysisContent"></div>
+      </details>
     </section>
 
     <!-- Output Section -->

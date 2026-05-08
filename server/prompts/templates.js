@@ -386,3 +386,72 @@ ${filesBlock}
 
   return { system: PREPROCESS_SYSTEM, user };
 }
+
+// ============================================================================
+// S1: Orchestrator Intent Routing + JD Analyzer
+// ============================================================================
+
+const ROUTER_SYSTEM = `你是一个意图分类器。根据用户的 query 和当前 JD，判断用户想做什么。
+
+只输出一个 JSON 对象，不要有任何其他文本。
+
+分类规则：
+- "analyze": 用户想分析 JD、看匹配度、评估岗位、比较岗位、还没说要干嘛
+- "generate": 用户明确要生成/写/做简历
+- "clarify": query 模糊不清，无法判断意图`;
+
+export function getRouteIntentPrompt({ query, jd }) {
+  const jdPreview = jd ? jd.slice(0, 500) : '(无 JD)';
+  const user = `用户 query: ${query || '(无，用户仅粘贴了 JD)'}
+当前 JD 摘要: ${jdPreview}
+
+请输出 JSON: {"intent":"analyze|generate|clarify","reason":"一句话理由"}`;
+  return { system: ROUTER_SYSTEM, user };
+}
+
+const ANALYZER_SYSTEM = `你是一位资深的职业顾问和技术面试官。你的任务是从 JD 中深度拆解岗位要求，并对照候选人的素材库计算覆盖度，给出匹配度判断。
+
+输出必须是严格的 JSON 对象，不要有任何其他文字。`;
+
+export function getAnalyzeJdPrompt({ jd, resumeLibrary }) {
+  let libraryBlock = '';
+  if (resumeLibrary?.length > 0) {
+    libraryBlock = `\n===== 简历素材库 =====\n`;
+    for (const item of resumeLibrary) {
+      libraryBlock += `\n--- ${item.name} ---\n${item.content}\n`;
+    }
+  } else {
+    libraryBlock = '\n===== 简历素材库 =====\n(空)\n';
+  }
+
+  const user = `请分析以下 JD，并对照素材库评估匹配度。
+
+===== JD =====
+${jd}
+${libraryBlock}
+
+请输出以下 JSON（不要有其他文字）：
+{
+  "hardRequirements": [
+    {"requirement":"硬性要求描述","hasEvidence":true/false,"sources":["支撑文件名"],"gap":"缺少什么(如有)"}
+  ],
+  "niceToHaves": [
+    {"requirement":"加分项描述","hasEvidence":true/false,"sources":["支撑文件名"]}
+  ],
+  "jobLevel":"junior|mid|senior|staff",
+  "matchVerdict":"有戏|勉强|没戏",
+  "matchReason":"一句话理由",
+  "strengths":["优势1","优势2"],
+  "weaknesses":["短板1","短板2"]
+}
+
+提取规则：
+1. hardRequirements: JD 中"必须/required/3年以上/精通"等硬性要求
+2. niceToHaves: "优先/preferred/加分/plus"等非必须要求
+3. 对照素材库判断每条要求是否有证据支撑
+4. jobLevel: 根据年限、职责、汇报线判断
+5. matchVerdict: 至少 70% 硬性要求有证据="有戏"，40-70%="勉强"，<40%="没戏"
+6. strengths/weaknesses: 结合 JD 要求和素材库给出`;
+
+  return { system: ANALYZER_SYSTEM, user };
+}

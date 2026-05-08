@@ -175,6 +175,8 @@ connectionId === 'jiekou-anthropic'      → Anthropic SDK (anthropic.js)
 | POST | `/apply-review` | 根据评审意见 diff 修改简历 | SSE |
 | POST | `/generate-html` | 生成 HTML | SSE |
 | POST | `/extract-jd-info` | 从 JD 提取公司/部门/职位 | No |
+| POST | `/route-intent` | Orchestrator 意图路由（analyze/generate/clarify） | No |
+| POST | `/analyze-jd` | JD Analyzer skill：深度拆解 JD 并对照素材库评估匹配度 | No |
 | POST | `/ocr-jd-images` | JD 图片 OCR 的 AI 兜底（仅用户主动触发） | No |
 | GET | `/default-preprocess-prompt` | 读取默认预处理 prompt 文件 | No |
 | POST | `/preprocess-library` | AI 预处理素材库 | SSE |
@@ -507,6 +509,63 @@ AI 预处理失败时自动回退到本地预处理，并在系统消息中提�
 硬编码路径：`/Users/wukun/Documents/jl/预处理-prompt.md`
 
 用户未输入自定义 prompt 时，通过 `/api/default-preprocess-prompt` 读取该文件作为默认值。
+
+---
+
+## 9.5 JD Analyzer（S1）
+
+### 功能概述
+
+新增 Orchestrator 意图路由 + JD Analyzer skill，为用户提供"事前评估"：在 Generate 之前，用素材库直接对照 JD 计算覆盖度，判断值不值得生成。
+
+### 与 Reviewer 打分的区别
+
+| | JD Analyzer | Reviewer 打分 |
+|---|---|---|
+| 时机 | 生成前 | 生成后 |
+| 依据 | 素材库 vs JD | 生成的简历 vs JD |
+| 目的 | 决定投不投 | 决定改不改 |
+| 成本 | 1 次轻量调用 | Generate + Review 两次调用 |
+
+### 触发流程
+
+1. 用户点击「分析 JD」按钮
+2. 前端调用 `/api/route-intent`，Orchestrator LLM 分类意图
+3. `analyze` → 调用 `/api/analyze-jd` → 展示分析报告
+4. `generate` → 提示用户直接点「生成简历」
+5. `clarify` → 反问用户意图
+6. 用户看完报告后点击「生成简历」，分析结果自动注入到生成指令中
+
+### API 端点
+
+**`POST /api/route-intent`** — 意图分类（轻量，maxTokens=256，非流式）
+```json
+// 请求: { model, query, jd, mock }
+// 响应: { intent: "analyze"|"generate"|"clarify", reason, usage }
+```
+
+**`POST /api/analyze-jd`** — JD Analyzer skill（maxTokens=1024，非流式）
+```json
+// 请求: { model, jd, resumeLibrary, mock }
+// 响应: {
+//   hardRequirements: [{req, hasEvidence, sources[], gap}],
+//   niceToHaves: [...],
+//   strengths: [], weaknesses: [],
+//   jobLevel: "junior|mid|senior|staff",
+//   matchVerdict: "有戏|勉强|没戏",
+//   matchReason, usage
+// }
+```
+
+### 分析结果集成
+
+`doGenerate()` 检测 `lastAnalysisResult`，若存在则将优势区/短板区/无素材支撑要求注入生成指令前部，引导 Generator 侧重点。
+
+### UI
+
+- 「分析 JD」按钮位于「生成简历」按钮左侧，secondary 样式
+- 分析报告展示为可折叠 `<details>` 区域，位于 action-bar 下方
+- 匹配度用颜色编码：绿色=有戏，黄色=勉强，红色=没戏
 
 ---
 
@@ -1161,6 +1220,7 @@ node test-e2e.mjs
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-05-08 | S1 JD Analyzer：新增 Orchestrator 意图路由（`/api/route-intent`）+ JD Analyzer skill（`/api/analyze-jd`）；前端「分析 JD」按钮 + 折叠报告区域；分析结果自动注入生成指令；7 个 mock 测试 + 3 个 real API 测试 | server/prompts/templates.js, server/routes/api.js, src/api.js, src/main.js, index.html, src/style.css, test-e2e.mjs, DESIGN.md | |
 | 2026-05-08 | D1 多 Reviewer 并行失败容错：`Promise.all` → `Promise.allSettled`，单个 reviewer 失败不丢弃其余结果；失败 reviewer 发 `status: 'failed'` SSE 事件；全部失败时仍发 error；mock 路径新增 `testFailModels` 支持可控测试；前端 `REVIEW_STATUS_ICONS` 新增 `failed` 状态 | server/routes/api.js, src/main.js, test-e2e.mjs, DESIGN.md | 6bb41da |
 | 2026-05-08 | D2 多 Reviewer 并发控制：按 API hostname 分组，同 provider 串行、不同 provider 并行；组内 try/catch 隔离单个失败 | server/routes/api.js, DESIGN.md | 58a2a2d |
 | 2026-05-05 | UI/UX 批量改进：①I3 折叠区 `<details>` 展开状态记忆（4 个指令区 persist/restore）；②I2 Textarea 自动增高（JD/指令区 max 600px，聊天 max 300px）；③G4 未配置 Reviewer 时提示 + 修复勾选保存不生效 bug（sentinel `_NONE_`）；④F15 多模型评审逐模型进度条（per-model pending/running/done SSE 事件） | index.html, src/main.js, src/style.css, server/routes/api.js, src/api.js, test-e2e.mjs, DESIGN.md | e14b41a, 2d62be8, 208ecb8, 0fb244e |

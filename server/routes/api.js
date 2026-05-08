@@ -4,7 +4,7 @@ import { initAnthropic, callAnthropic } from '../services/anthropic.js';
 import { initOpenAICompat, callOpenAICompat } from '../services/openai-compat.js';
 import { readFileContent, listResumeFiles } from '../services/fileReader.js';
 import { getLibraryDigest, appendToDigestCache, getAiPreprocessedLibrary, saveAiDigestCache, readRawLibraryFiles } from '../services/libraryCache.js';
-import { getResumeGenerationPrompt, getReviewPrompt, getReviewPromptConcise, getReviewMergePrompt, getHtmlGenerationPrompt, getApplyReviewPrompt, getLibraryPreprocessPrompt } from '../prompts/templates.js';
+import { getResumeGenerationPrompt, getReviewPrompt, getReviewPromptConcise, getReviewMergePrompt, getHtmlGenerationPrompt, getApplyReviewPrompt, getLibraryPreprocessPrompt, getRouteIntentPrompt, getAnalyzeJdPrompt } from '../prompts/templates.js';
 import { setPiiConfig, getPiiEntries, sanitizeRequestBody, sanitizeLibrary, sanitizeMessages, createStreamRestorer } from '../services/piiSanitizer.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -660,6 +660,79 @@ ${jd}`;
     res.json({ ...info, usage: result.usage });
   } catch (err) {
     res.json({ company: '', department: '', title: '', language: 'en' });
+  }
+});
+
+// ============================================================================
+// S1: Orchestrator Intent Routing + JD Analyzer
+// ============================================================================
+
+const MOCK_ROUTE_INTENT = { intent: 'analyze', reason: '用户要求分析JD匹配度' };
+const MOCK_ANALYZE_JD = {
+  hardRequirements: [
+    { requirement: '5年以上产品经理经验', hasEvidence: true, sources: ['base-resume.txt'], gap: '' },
+    { requirement: 'AI/ML 领域经验', hasEvidence: true, sources: ['ai-projects.txt'], gap: '' },
+    { requirement: '英文流利', hasEvidence: false, sources: [], gap: '素材库无英文能力证明' },
+  ],
+  niceToHaves: [
+    { requirement: '大厂背景', hasEvidence: true, sources: ['base-resume.txt'] },
+    { requirement: '数据驱动决策经验', hasEvidence: true, sources: ['ai-projects.txt'] },
+  ],
+  jobLevel: 'senior',
+  matchVerdict: '有戏',
+  matchReason: '80%硬性要求有素材支撑，核心经验高度匹配',
+  strengths: ['AI产品经验丰富', '大厂背景符合'],
+  weaknesses: ['英文能力无素材支撑'],
+};
+
+/**
+ * POST /api/route-intent — Orchestrator intent classification
+ * Lightweight, non-streaming, maxTokens=256
+ */
+router.post('/route-intent', async (req, res) => {
+  if (req.body.mock) return res.json({ ...MOCK_ROUTE_INTENT, usage: { input: 0, output: 0 } });
+  try {
+    const { model, query, jd } = req.body;
+    if (!model) return res.status(400).json({ error: '需要提供 model' });
+    const caller = getModelCaller(model);
+    const { system, user } = getRouteIntentPrompt({ query, jd });
+    const result = await caller(user, () => {}, { system, maxTokens: 256, jsonMode: true });
+    let cleaned = result.text.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return res.json({ ...MOCK_ROUTE_INTENT, usage: result.usage });
+    const parsed = JSON.parse(jsonMatch[0]);
+    res.json({ intent: parsed.intent || 'clarify', reason: parsed.reason || '', usage: result.usage });
+  } catch (err) {
+    // Fallback to clarify on any error
+    res.json({ intent: 'clarify', reason: '意图识别失败', usage: { input: 0, output: 0 } });
+  }
+});
+
+/**
+ * POST /api/analyze-jd — JD Analyzer skill
+ * Non-streaming, returns structured JSON analysis
+ */
+router.post('/analyze-jd', async (req, res) => {
+  if (req.body.mock) return res.json({ ...MOCK_ANALYZE_JD, usage: { input: 0, output: 0 } });
+  try {
+    const piiEntries = getPiiEntries();
+    if (piiEntries.length > 0) {
+      sanitizeRequestBody(req.body, ['jd'], piiEntries);
+      sanitizeLibrary(req.body.resumeLibrary, piiEntries);
+    }
+    const { model, jd, resumeLibrary } = req.body;
+    if (!model) return res.status(400).json({ error: '需要提供 model' });
+    if (!jd) return res.status(400).json({ error: '需要提供 JD' });
+    const caller = getModelCaller(model);
+    const { system, user } = getAnalyzeJdPrompt({ jd, resumeLibrary });
+    const result = await caller(user, () => {}, { system, maxTokens: 1024, jsonMode: true });
+    let cleaned = result.text.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('AI 未返回有效 JSON');
+    const analysis = JSON.parse(jsonMatch[0]);
+    res.json({ ...analysis, usage: result.usage });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -76,7 +76,9 @@ const els = {
   genLoadFile: $('genLoadFile'), genSaveFile: $('genSaveFile'), genFileStatus: $('genFileStatus'),
   reviewLoadFile: $('reviewLoadFile'), reviewSaveFile: $('reviewSaveFile'), reviewFileStatus: $('reviewFileStatus'),
   htmlFormatLoadFile: $('htmlFormatLoadFile'), htmlFormatSaveFile: $('htmlFormatSaveFile'), htmlFormatFileStatus: $('htmlFormatFileStatus'),
-  generateBtn: $('generateBtn'), outputSection: $('outputSection'),
+  generateBtn: $('generateBtn'), analyzeJdBtn: $('analyzeJdBtn'),
+  jdAnalysisSection: $('jdAnalysisSection'), jdAnalysisContent: $('jdAnalysisContent'), jdAnalysisStatus: $('jdAnalysisStatus'),
+  outputSection: $('outputSection'),
    resumeOutput: $('resumeOutput'), resumeStatusAndToken: $('resumeStatusAndToken'), resumeTimeoutWarn: $('resumeTimeoutWarn'),
   saveResumeBtn: $('saveResumeBtn'), regenerateBtn: $('regenerateBtn'),
   saveFilenameRow: $('saveFilenameRow'), saveFilename: $('saveFilename'), confirmSaveBtn: $('confirmSaveBtn'), cancelSaveBtn: $('cancelSaveBtn'),
@@ -113,6 +115,7 @@ let baseResumeCache = new Map(); // key=filename, value={content, modified}
 let jdImageLastBatch = null;
 let jdOcrWorkerPromise = null;
 let preprocessChatMessages = []; // Preprocessor chat context
+let lastAnalysisResult = null; // S1: JD Analyzer result for passing to generate
 
 /* ── Session Token & Cost Tracking ── */
 let sessionUsage = { totalInput: 0, totalOutput: 0, totalCost: 0 };
@@ -1017,6 +1020,7 @@ function bindEvents() {
   els.baseResumeSelect.addEventListener('change', onBaseResumeChange);
   els.generateBtn.addEventListener('click', doGenerate);
   els.regenerateBtn.addEventListener('click', doGenerate);
+  els.analyzeJdBtn.addEventListener('click', doAnalyzeJd);
   els.jdImageUpload.addEventListener('change', handleJdImageUpload);
   if (els.jdImageUseAi) {
     els.jdImageUseAi.addEventListener('change', () => {
@@ -1270,6 +1274,7 @@ function lockAllButtons() {
   
   // 禁用所有主操作按钮
   els.generateBtn.disabled = true;
+  els.analyzeJdBtn.disabled = true;
   els.regenerateBtn.disabled = true;
   els.reviewBtn.disabled = true;
   els.applyReviewBtn.disabled = true;
@@ -1326,6 +1331,7 @@ function updateGenerateBtn() {
   const hasHtml = !!getHtmlModelId();
   const hasReviewer = getReviewerModelIds().length > 0;
   els.generateBtn.disabled = !hasJD || isStreaming || (!els.mockMode.checked && !hasGenerator);
+  els.analyzeJdBtn.disabled = !hasJD || isStreaming || (!els.mockMode.checked && !hasGenerator);
   els.regenerateBtn.disabled = isStreaming;
   els.generateHtmlBtn.disabled = !els.resumeOutput.value.trim() || isStreaming || (!els.mockMode.checked && !hasHtml);
   els.reviewBtn.disabled = !els.resumeOutput.value.trim() || isStreaming || (!els.mockMode.checked && !hasReviewer);
@@ -2107,6 +2113,139 @@ function parseGeneratedOutput(fullText) {
   return { resumeBody, notes };
 }
 
+/* ── S1: JD Analyzer ── */
+async function doAnalyzeJd() {
+  const jd = getNormalizedJdText();
+  if (!jd) return alert('请输入 JD');
+
+  lockAllButtons();
+  els.jdAnalysisSection.style.display = '';
+  els.jdAnalysisSection.open = true;
+  els.jdAnalysisStatus.textContent = ' — 正在分析...';
+  els.jdAnalysisContent.innerHTML = '<p style="color:#6b7280">正在分析 JD 并匹配素材库...</p>';
+  lastAnalysisResult = null;
+
+  try {
+    // Step 1: Intent routing
+    const routerModel = getJdAnalysisModelId();
+    const mock = els.mockMode.checked;
+    let intent = 'analyze';
+    if (!mock && routerModel) {
+      const routeRes = await api.routeIntent(routerModel, jd, jd, mock);
+      intent = routeRes.intent;
+      // Track token usage
+      if (routeRes.usage) {
+        sessionUsage.totalInput += (routeRes.usage.input || 0);
+        sessionUsage.totalOutput += (routeRes.usage.output || 0);
+        const pricing = PRICING[routerModel] || { input: 0, output: 0 };
+        sessionUsage.totalCost += (routeRes.usage.input || 0) * pricing.input + (routeRes.usage.output || 0) * pricing.output;
+        updateSessionTotal();
+      }
+    }
+
+    if (intent === 'generate') {
+      els.jdAnalysisStatus.textContent = ' — 意图为生成，直接进入生成';
+      els.jdAnalysisContent.innerHTML = '<p style="color:#6b7280">Orchestrator 判断意图为「生成简历」，请直接点击「生成简历」按钮。</p>';
+      return;
+    }
+    if (intent === 'clarify') {
+      els.jdAnalysisStatus.textContent = ' — 需要确认';
+      els.jdAnalysisContent.innerHTML = '<p style="color:#b45309">无法判断您的意图。请明确输入"分析匹配度"或"生成简历"。</p>';
+      return;
+    }
+
+    // Step 2: Analyze JD
+    els.jdAnalysisStatus.textContent = ' — 正在深度分析...';
+    let library = [];
+    const dir = els.libraryPath.value.trim();
+    if (dir && !mock) {
+      try {
+        await ensureLibraryContents();
+        const { digest } = await api.getLibraryDigest(dir, []);
+        library = digest;
+      } catch { /* library empty is ok */ }
+    }
+
+    const model = requireConfiguredConnection(routerModel, 'Orchestrator');
+    const result = await api.analyzeJd(model, jd, library, mock);
+    lastAnalysisResult = result;
+
+    // Track token usage
+    if (result.usage) {
+      sessionUsage.totalInput += (result.usage.input || 0);
+      sessionUsage.totalOutput += (result.usage.output || 0);
+      const pricing = PRICING[model] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
+
+    renderAnalysisReport(result);
+    persistDraftState(true);
+  } catch (err) {
+    els.jdAnalysisStatus.textContent = ' — 分析失败';
+    els.jdAnalysisContent.innerHTML = `<p style="color:#b91c1c">分析失败: ${escHtml(err.message)}</p>`;
+  } finally {
+    unlockAllButtons();
+  }
+}
+
+function renderAnalysisReport(data) {
+  const verdictMap = {
+    '有戏': { cls: 'good', label: '有戏' },
+    '勉强': { cls: 'maybe', label: '勉强' },
+    '没戏': { cls: 'bad', label: '没戏' },
+  };
+  const verdict = verdictMap[data.matchVerdict] || verdictMap['勉强'];
+  const levelMap = { junior: '初级', mid: '中级', senior: '高级', staff: '专家级' };
+
+  let html = '';
+  html += `<div class="jd-analysis-verdict ${verdict.cls}">${verdict.label}</div>`;
+  if (data.matchReason) html += ` <span style="color:#4b5563;font-size:13px">${escHtml(data.matchReason)}</span>`;
+  if (data.jobLevel) html += `<div style="margin-top:6px;font-size:12px;color:#6b7280">岗位级别: ${levelMap[data.jobLevel] || data.jobLevel}</div>`;
+
+  if (data.strengths?.length) {
+    html += '<div class="jd-analysis-section-title">优势区</div><div>';
+    html += data.strengths.map(s => `<span class="jd-analysis-tag strength">${escHtml(s)}</span>`).join(' ');
+    html += '</div>';
+  }
+  if (data.weaknesses?.length) {
+    html += '<div class="jd-analysis-section-title">短板区</div><div>';
+    html += data.weaknesses.map(w => `<span class="jd-analysis-tag weakness">${escHtml(w)}</span>`).join(' ');
+    html += '</div>';
+  }
+
+  if (data.hardRequirements?.length) {
+    html += '<div class="jd-analysis-section-title">硬性要求</div><ol class="jd-analysis-list">';
+    for (const r of data.hardRequirements) {
+      const icon = r.hasEvidence ? '✅' : '❌';
+      const gap = r.gap ? ` <span class="jd-analysis-gap">(${escHtml(r.gap)})</span>` : '';
+      const sources = r.sources?.length ? ` <span class="jd-analysis-source">[${r.sources.map(escHtml).join(', ')}]</span>` : '';
+      html += `<li>${icon} ${escHtml(r.requirement)}${gap}${sources}</li>`;
+    }
+    html += '</ol>';
+  }
+
+  if (data.niceToHaves?.length) {
+    html += '<div class="jd-analysis-section-title">加分项</div><ol class="jd-analysis-list">';
+    for (const r of data.niceToHaves) {
+      const icon = r.hasEvidence ? '✅' : '➖';
+      const sources = r.sources?.length ? ` <span class="jd-analysis-source">[${r.sources.map(escHtml).join(', ')}]</span>` : '';
+      html += `<li>${icon} ${escHtml(r.requirement)}${sources}</li>`;
+    }
+    html += '</ol>';
+  }
+
+  els.jdAnalysisContent.innerHTML = html;
+  const covered = data.hardRequirements?.filter(r => r.hasEvidence).length || 0;
+  const total = data.hardRequirements?.length || 0;
+  els.jdAnalysisStatus.textContent = ` — ${covered}/${total} 硬性要求有支撑`;
+}
+
+function escHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /* ── Generate Resume ── */
 async function doGenerate() {
   persistInputs();
@@ -2172,11 +2311,25 @@ async function doGenerate() {
     }
     els.resumeStatusAndToken.textContent = '正在向 AI 发送请求...';
     let firstChunkReceived = false;
+    // Inject analysis context if available
+    let genInstructions = els.genInstructions.value;
+    if (lastAnalysisResult) {
+      const a = lastAnalysisResult;
+      let analysisContext = '【JD 分析参考（自动生成，请结合以下分析调整简历侧重）】\n';
+      if (a.strengths?.length) analysisContext += `优势区（重点展开）: ${a.strengths.join('、')}\n`;
+      if (a.weaknesses?.length) analysisContext += `短板区（诚实面对，避免过度包装）: ${a.weaknesses.join('、')}\n`;
+      if (a.hardRequirements?.length) {
+        const gaps = a.hardRequirements.filter(r => !r.hasEvidence);
+        if (gaps.length) analysisContext += `无素材支撑的要求（需诚实处理）: ${gaps.map(r => r.requirement).join('、')}\n`;
+      }
+      analysisContext += '\n';
+      genInstructions = analysisContext + genInstructions;
+    }
     rawOutput = await api.streamRequest('/api/generate', {
       model, mock,
       jd, baseResume: resume,
       resumeLibrary: library,
-      instructions: els.genInstructions.value,
+      instructions: genInstructions,
       generateCoverLetter: els.generateCoverLetter.checked,
       previouslySubmitted,
       reasoning: getReasoningForAgent('generator'),
