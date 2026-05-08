@@ -310,6 +310,14 @@
         <textarea id="manualResumeInput" rows="6" placeholder="在此粘贴简历文本内容..."></textarea>
       </div>
 
+      <!-- Orchestrator Query Input + Analyze Button -->
+      <div class="orchestrator-query-row">
+        <input type="text" id="orchestratorQueryInput" placeholder="输入指令，如「这个岗位怎么样？」「帮我分析匹配度」" class="orchestrator-query-input">
+        <button id="orchestratorQueryBtn" class="btn-secondary">提交</button>
+        <button id="analyzeJdBtn" class="btn-secondary">分析 JD</button>
+        <span id="orchestratorQueryStatus" class="status-text"></span>
+      </div>
+
       <details class="collapsible remember-state" id="genInstructionsDetails">
         <summary>生成指令（简历/求职信生成的注意事项）</summary>
         <div class="instruction-toolbar">
@@ -349,19 +357,11 @@
         <textarea id="htmlInstructions" rows="8" placeholder="输入HTML格式转换的额外要求..."></textarea>
       </details>
 
-      <!-- Orchestrator Query Input -->
-      <div class="orchestrator-query-row">
-        <input type="text" id="orchestratorQueryInput" placeholder="输入指令，如「这个岗位怎么样？」「帮我分析匹配度」" class="orchestrator-query-input">
-        <button id="orchestratorQueryBtn" class="btn-secondary">提交</button>
-        <span id="orchestratorQueryStatus" class="status-text"></span>
-      </div>
-
       <div class="action-bar">
         <label class="checkbox-label">
           <input type="checkbox" id="generateCoverLetter"> 同时生成求职信
         </label>
         <div>
-          <button id="analyzeJdBtn" class="btn-secondary btn-lg">分析 JD</button>
           <button id="generateBtn" class="btn-primary btn-lg" disabled>生成简历</button>
         </div>
       </div>
