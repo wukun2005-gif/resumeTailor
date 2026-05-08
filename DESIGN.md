@@ -1161,7 +1161,8 @@ node test-e2e.mjs
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
-| 2026-05-08 | D1 多 Reviewer 并行失败容错：`Promise.all` → `Promise.allSettled`，单个 reviewer 失败不丢弃其余结果；失败 reviewer 发 `status: 'failed'` SSE 事件；全部失败时仍发 error；mock 路径新增 `testFailModels` 支持可控测试；前端 `REVIEW_STATUS_ICONS` 新增 `failed` 状态 | server/routes/api.js, src/main.js, test-e2e.mjs, DESIGN.md | |
+| 2026-05-08 | D1 多 Reviewer 并行失败容错：`Promise.all` → `Promise.allSettled`，单个 reviewer 失败不丢弃其余结果；失败 reviewer 发 `status: 'failed'` SSE 事件；全部失败时仍发 error；mock 路径新增 `testFailModels` 支持可控测试；前端 `REVIEW_STATUS_ICONS` 新增 `failed` 状态 | server/routes/api.js, src/main.js, test-e2e.mjs, DESIGN.md | 6bb41da |
+| 2026-05-08 | D2 多 Reviewer 并发控制：按 API hostname 分组，同 provider 串行、不同 provider 并行；组内 try/catch 隔离单个失败 | server/routes/api.js, DESIGN.md | 58a2a2d |
 | 2026-05-05 | UI/UX 批量改进：①I3 折叠区 `<details>` 展开状态记忆（4 个指令区 persist/restore）；②I2 Textarea 自动增高（JD/指令区 max 600px，聊天 max 300px）；③G4 未配置 Reviewer 时提示 + 修复勾选保存不生效 bug（sentinel `_NONE_`）；④F15 多模型评审逐模型进度条（per-model pending/running/done SSE 事件） | index.html, src/main.js, src/style.css, server/routes/api.js, src/api.js, test-e2e.mjs, DESIGN.md | e14b41a, 2d62be8, 208ecb8, 0fb244e |
 | 2026-05-04 | F1 SSE 断连重试提示：新增 isNetworkError() 区分网络错误与 API 错误；8 个流式请求 catch 块统一处理——网络错误显示「连接中断」+ 重试按钮，API 错误显示服务端错误信息；聊天操作重试时自动回滚最后一条用户消息；新增 3 个测试用例 | src/api.js, src/main.js, src/style.css, test-e2e.mjs, DESIGN.md | 928a8d1 |
 | 2026-05-03 | C5 AI 响应超时提示 + 修复流式操作按钮锁定回归：①TIMEOUT_MS 3s→15s，检测点移到 reader.read() 后，新增 onStreamResumed 回调，专用超时警告 span 与进度文案并存；②删除 4 处过早的按钮恢复调用，统一由 finally 块 unlockAllButtons 管理；新增 4 个超时测试用例 | src/api.js, src/main.js, src/style.css, index.html, test-e2e.mjs | fc52037 |
