@@ -349,6 +349,13 @@
         <textarea id="htmlInstructions" rows="8" placeholder="输入HTML格式转换的额外要求..."></textarea>
       </details>
 
+      <!-- Orchestrator Query Input -->
+      <div class="orchestrator-query-row">
+        <input type="text" id="orchestratorQueryInput" placeholder="输入指令，如「这个岗位怎么样？」「帮我分析匹配度」" class="orchestrator-query-input">
+        <button id="orchestratorQueryBtn" class="btn-secondary">提交</button>
+        <span id="orchestratorQueryStatus" class="status-text"></span>
+      </div>
+
       <div class="action-bar">
         <label class="checkbox-label">
           <input type="checkbox" id="generateCoverLetter"> 同时生成求职信

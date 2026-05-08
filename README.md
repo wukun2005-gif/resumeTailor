@@ -220,6 +220,33 @@ flowchart TD
 
 **核心价值**：生成与评审分离消除偏见，多模型交叉评审发现更多问题，用户在每个环节可介入。
 
+### 意图识别驱动的 Skill 调用
+
+Resume Tailor 采用**意图识别 → Skill 调用**的架构模式：用户用自然语言表达需求，Orchestrator 自动识别意图并调用对应的 Skill（能力模块），无需用户记住按钮位置或操作流程。
+
+**两种交互方式**：
+
+| 入口 | 行为 | 适用场景 |
+|------|------|---------|
+| **按钮**（如「分析 JD」） | 直接调用对应 Skill | 用户明确知道要做什么 |
+| **自然语言输入**（Query 框） | Orchestrator 识别意图 → 自动路由到正确 Skill | 用户用自然语言表达需求 |
+
+**用户价值**：
+
+- **降低认知负担**：不需要记住"先分析再生成"的流程，直接说"帮我看看这个岗位怎么样"
+- **智能路由**：Orchestrator 理解用户意图，自动选择正确的 Skill（分析/生成/澄清）
+- **可扩展性**：新增 Skill 只需注册到路由表，用户无需学习新的操作方式
+- **容错与引导**：意图模糊时主动反问，避免误操作
+
+**示例**：
+
+```
+用户输入: "这个岗位怎么样？"      → Orchestrator → JD Analyzer Skill（分析匹配度）
+用户输入: "帮我看看这个JD"        → Orchestrator → JD Analyzer Skill（分析匹配度）
+用户输入: "帮我生成简历"          → Orchestrator → 提示直接点击「生成简历」按钮
+用户输入: "帮我处理一下"          → Orchestrator → 反问用户意图
+```
+
 ### 两级模型配置
 
 **第一级：模型连接** — 配置供应商的API凭证（7个可选连接，覆盖 Jiekou.ai / OpenRouter.ai / Google AI Studio）
@@ -241,7 +268,11 @@ flowchart TD
 
     LIB[(本地简历素材库)] -->|自动读取全部素材| INPUT
     INPUT["输入JD / 选择基础简历 / 编写指令"]
-    INPUT -->|可选：点击'分析 JD'| ANALYZE["Orchestrator - 意图路由 + JD 匹配度分析"]
+    INPUT -->|可选：点击'分析 JD'| ANALYZE["JD Analyzer Skill - 直接分析匹配度"]
+    INPUT -->|可选：Query 框输入自然语言| ROUTE["Orchestrator - 意图识别"]
+    ROUTE -->|意图: 分析| ANALYZE
+    ROUTE -->|意图: 生成| CONSIST
+    ROUTE -->|意图: 模糊| CLARIFY["反问用户确认意图"]
     ANALYZE -->|分析结果自动注入生成指令| CONSIST
     INPUT -->|点击'生成简历'| CONSIST
 
@@ -329,7 +360,9 @@ Resume Tailor 通过三层机制管理 AI 的不确定性和成本：
 
 ### 场景6：生成前评估JD匹配度
 
-粘贴JD → 点击「分析 JD」→ Orchestrator 先做意图路由，再深度拆解硬性要求/加分项，对照素材库给出匹配度（有戏/勉强/没戏）、优势区和短板区 → 分析结果自动注入生成指令，引导 Generator 侧重点。
+**方式一（按钮）**：粘贴JD → 点击「分析 JD」→ 直接深度拆解硬性要求/加分项，对照素材库给出匹配度（有戏/勉强/没戏）、优势区和短板区 → 分析结果自动注入生成指令，引导 Generator 侧重点。
+
+**方式二（自然语言）**：粘贴JD → 在 Query 框输入「这个岗位怎么样？」→ Orchestrator 识别意图为分析 → 自动触发 JD Analyzer Skill → 展示分析报告。
 
 ---
 

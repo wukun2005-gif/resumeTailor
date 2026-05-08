@@ -77,6 +77,7 @@ const els = {
   reviewLoadFile: $('reviewLoadFile'), reviewSaveFile: $('reviewSaveFile'), reviewFileStatus: $('reviewFileStatus'),
   htmlFormatLoadFile: $('htmlFormatLoadFile'), htmlFormatSaveFile: $('htmlFormatSaveFile'), htmlFormatFileStatus: $('htmlFormatFileStatus'),
   generateBtn: $('generateBtn'), analyzeJdBtn: $('analyzeJdBtn'),
+  orchestratorQueryInput: $('orchestratorQueryInput'), orchestratorQueryBtn: $('orchestratorQueryBtn'), orchestratorQueryStatus: $('orchestratorQueryStatus'),
   jdAnalysisSection: $('jdAnalysisSection'), jdAnalysisContent: $('jdAnalysisContent'), jdAnalysisStatus: $('jdAnalysisStatus'),
   outputSection: $('outputSection'),
    resumeOutput: $('resumeOutput'), resumeStatusAndToken: $('resumeStatusAndToken'), resumeTimeoutWarn: $('resumeTimeoutWarn'),
@@ -1021,6 +1022,8 @@ function bindEvents() {
   els.generateBtn.addEventListener('click', doGenerate);
   els.regenerateBtn.addEventListener('click', doGenerate);
   els.analyzeJdBtn.addEventListener('click', doAnalyzeJd);
+  els.orchestratorQueryBtn.addEventListener('click', handleOrchestratorQuery);
+  els.orchestratorQueryInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleOrchestratorQuery(); });
   els.jdImageUpload.addEventListener('change', handleJdImageUpload);
   if (els.jdImageUseAi) {
     els.jdImageUseAi.addEventListener('change', () => {
@@ -1275,6 +1278,7 @@ function lockAllButtons() {
   // 禁用所有主操作按钮
   els.generateBtn.disabled = true;
   els.analyzeJdBtn.disabled = true;
+  els.orchestratorQueryBtn.disabled = true;
   els.regenerateBtn.disabled = true;
   els.reviewBtn.disabled = true;
   els.applyReviewBtn.disabled = true;
@@ -1332,6 +1336,7 @@ function updateGenerateBtn() {
   const hasReviewer = getReviewerModelIds().length > 0;
   els.generateBtn.disabled = !hasJD || isStreaming || (!els.mockMode.checked && !hasGenerator);
   els.analyzeJdBtn.disabled = !hasJD || isStreaming || (!els.mockMode.checked && !hasGenerator);
+  els.orchestratorQueryBtn.disabled = isStreaming;
   els.regenerateBtn.disabled = isStreaming;
   els.generateHtmlBtn.disabled = !els.resumeOutput.value.trim() || isStreaming || (!els.mockMode.checked && !hasHtml);
   els.reviewBtn.disabled = !els.resumeOutput.value.trim() || isStreaming || (!els.mockMode.checked && !hasReviewer);
@@ -2126,35 +2131,10 @@ async function doAnalyzeJd() {
   lastAnalysisResult = null;
 
   try {
-    // Step 1: Intent routing
-    const routerModel = getJdAnalysisModelId();
     const mock = els.mockMode.checked;
-    let intent = 'analyze';
-    if (!mock && routerModel) {
-      const routeRes = await api.routeIntent(routerModel, jd, jd, mock);
-      intent = routeRes.intent;
-      // Track token usage
-      if (routeRes.usage) {
-        sessionUsage.totalInput += (routeRes.usage.input || 0);
-        sessionUsage.totalOutput += (routeRes.usage.output || 0);
-        const pricing = PRICING[routerModel] || { input: 0, output: 0 };
-        sessionUsage.totalCost += (routeRes.usage.input || 0) * pricing.input + (routeRes.usage.output || 0) * pricing.output;
-        updateSessionTotal();
-      }
-    }
+    const routerModel = getJdAnalysisModelId();
 
-    if (intent === 'generate') {
-      els.jdAnalysisStatus.textContent = ' — 意图为生成，直接进入生成';
-      els.jdAnalysisContent.innerHTML = '<p style="color:#6b7280">Orchestrator 判断意图为「生成简历」，请直接点击「生成简历」按钮。</p>';
-      return;
-    }
-    if (intent === 'clarify') {
-      els.jdAnalysisStatus.textContent = ' — 需要确认';
-      els.jdAnalysisContent.innerHTML = '<p style="color:#b45309">无法判断您的意图。请明确输入"分析匹配度"或"生成简历"。</p>';
-      return;
-    }
-
-    // Step 2: Analyze JD
+    // Directly call Analyzer (button skips intent routing)
     els.jdAnalysisStatus.textContent = ' — 正在深度分析...';
     let library = [];
     const dir = els.libraryPath.value.trim();
@@ -2184,6 +2164,72 @@ async function doAnalyzeJd() {
   } catch (err) {
     els.jdAnalysisStatus.textContent = ' — 分析失败';
     els.jdAnalysisContent.innerHTML = `<p style="color:#b91c1c">分析失败: ${escHtml(err.message)}</p>`;
+  } finally {
+    unlockAllButtons();
+  }
+}
+
+/* ── S2: Orchestrator Query ── */
+async function handleOrchestratorQuery() {
+  const query = els.orchestratorQueryInput.value.trim();
+  if (!query) return;
+
+  const jd = getNormalizedJdText();
+  if (!jd) return alert('请输入 JD');
+
+  lockAllButtons();
+  els.orchestratorQueryStatus.textContent = '正在识别意图...';
+  els.orchestratorQueryStatus.className = 'status-text';
+
+  try {
+    const routerModel = getJdAnalysisModelId();
+    const mock = els.mockMode.checked;
+    const model = requireConfiguredConnection(routerModel, 'Orchestrator');
+
+    // Step 1: Intent routing
+    const routeRes = await api.routeIntent(model, query, jd, mock);
+    const intent = routeRes.intent;
+
+    // Track token usage
+    if (routeRes.usage) {
+      sessionUsage.totalInput += (routeRes.usage.input || 0);
+      sessionUsage.totalOutput += (routeRes.usage.output || 0);
+      const pricing = PRICING[model] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (routeRes.usage.input || 0) * pricing.input + (routeRes.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
+
+    if (intent === 'generate') {
+      els.orchestratorQueryStatus.textContent = '意图: 生成简历';
+      els.orchestratorQueryStatus.className = 'status-text success';
+      els.jdAnalysisSection.style.display = '';
+      els.jdAnalysisSection.open = true;
+      els.jdAnalysisStatus.textContent = ' — 意图为生成';
+      els.jdAnalysisContent.innerHTML = '<p style="color:#6b7280">Orchestrator 判断意图为「生成简历」，请直接点击「生成简历」按钮。</p>';
+      return;
+    }
+
+    if (intent === 'clarify') {
+      els.orchestratorQueryStatus.textContent = '需要确认';
+      els.orchestratorQueryStatus.className = 'status-text';
+      els.jdAnalysisSection.style.display = '';
+      els.jdAnalysisSection.open = true;
+      els.jdAnalysisStatus.textContent = ' — 需要确认';
+      els.jdAnalysisContent.innerHTML = `<p style="color:#b45309">无法判断您的意图。请明确输入，例如「分析匹配度」或「生成简历」。</p><p style="color:#6b7280;font-size:12px">您的输入: ${escHtml(query)}</p>`;
+      return;
+    }
+
+    // intent === 'analyze': proceed with JD analysis
+    els.orchestratorQueryStatus.textContent = '意图: 分析匹配度';
+    els.orchestratorQueryStatus.className = 'status-text success';
+    await doAnalyzeJd();
+  } catch (err) {
+    els.orchestratorQueryStatus.textContent = '识别失败';
+    els.orchestratorQueryStatus.className = 'status-text error';
+    els.jdAnalysisSection.style.display = '';
+    els.jdAnalysisSection.open = true;
+    els.jdAnalysisStatus.textContent = ' — 意图识别失败';
+    els.jdAnalysisContent.innerHTML = `<p style="color:#b91c1c">意图识别失败: ${escHtml(err.message)}</p>`;
   } finally {
     unlockAllButtons();
   }

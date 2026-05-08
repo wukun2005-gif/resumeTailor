@@ -529,12 +529,24 @@ AI 预处理失败时自动回退到本地预处理，并在系统消息中提�
 
 ### 触发流程
 
+**两种入口**：
+
+| 入口 | 行为 | 适用场景 |
+|------|------|---------|
+| 「分析 JD」按钮 | 直接调用 Analyzer，跳过意图路由 | 用户明确要分析 |
+| Query 输入框 | 先调 `/api/route-intent` → analyze 调 Analyzer / generate 提示 / clarify 反问 | 用户用自然语言表达意图 |
+
+**按钮流程（直接分析）**：
 1. 用户点击「分析 JD」按钮
+2. 直接调用 `/api/analyze-jd` → 展示分析报告
+3. 用户看完报告后点击「生成简历」，分析结果自动注入到生成指令中
+
+**Query 框流程（意图路由）**：
+1. 用户在 Query 框输入自然语言（如"这个岗位怎么样？"）
 2. 前端调用 `/api/route-intent`，Orchestrator LLM 分类意图
-3. `analyze` → 调用 `/api/analyze-jd` → 展示分析报告
-4. `generate` → 提示用户直接点「生成简历」
-5. `clarify` → 反问用户意图
-6. 用户看完报告后点击「生成简历」，分析结果自动注入到生成指令中
+3. `analyze` → 调用 `doAnalyzeJd()` → 展示分析报告
+4. `generate` → 提示用户直接点「生成简历」按钮
+5. `clarify` → 反问用户意图，提示明确输入
 
 ### API 端点
 
@@ -1220,6 +1232,7 @@ node test-e2e.mjs
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-05-08 | S2 Orchestrator Query 输入框：新增自然语言 query 输入框，用户输入指令后经意图路由分发到对应 Skill；「分析 JD」按钮回归直接调 Analyzer（跳过意图路由）；README 突出"意图识别→Skill调用"设计思想 | index.html, src/main.js, src/style.css, README.md, DESIGN.md, backlog.md | |
 | 2026-05-08 | S1 JD Analyzer：新增 Orchestrator 意图路由（`/api/route-intent`）+ JD Analyzer skill（`/api/analyze-jd`）；前端「分析 JD」按钮 + 折叠报告区域；分析结果自动注入生成指令；7 个 mock 测试 + 3 个 real API 测试 | server/prompts/templates.js, server/routes/api.js, src/api.js, src/main.js, index.html, src/style.css, test-e2e.mjs, DESIGN.md | |
 | 2026-05-08 | D1 多 Reviewer 并行失败容错：`Promise.all` → `Promise.allSettled`，单个 reviewer 失败不丢弃其余结果；失败 reviewer 发 `status: 'failed'` SSE 事件；全部失败时仍发 error；mock 路径新增 `testFailModels` 支持可控测试；前端 `REVIEW_STATUS_ICONS` 新增 `failed` 状态 | server/routes/api.js, src/main.js, test-e2e.mjs, DESIGN.md | 6bb41da |
 | 2026-05-08 | D2 多 Reviewer 并发控制：按 API hostname 分组，同 provider 串行、不同 provider 并行；组内 try/catch 隔离单个失败 | server/routes/api.js, DESIGN.md | 58a2a2d |
