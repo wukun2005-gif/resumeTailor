@@ -689,6 +689,61 @@ async function testReviewMulti(generatedResume) {
   log('/review-multi usage returned', !!result.usage && typeof result.usage.input === 'number', JSON.stringify(result.usage || {}));
 }
 
+async function testReviewMultiPartialFailure() {
+  // D1: One reviewer fails via testFailModels, the other succeeds — merge should still happen
+  // Use distinct mock IDs so testFailModels can target just one
+  const result = await postSSEWithRetry('/review-multi', {
+    models: ['mock-ok', 'mock-fail'],
+    orchestratorModel: 'mock-ok',
+    jd: SAMPLE_JD,
+    baseResume: SAMPLE_RESUME,
+    updatedResume: SAMPLE_RESUME,
+    resumeLibrary: [],
+    instructions: '',
+    reviewInstructions: '',
+    previouslySubmitted: '',
+    mock: true,
+    testFailModels: ['mock-fail'],
+  });
+
+  log('/review-multi partial-fail: merge still produced', result.text.length > 100, `length=${result.text.length}`);
+  log('/review-multi partial-fail: no error', !result.error, result.error || '(none)');
+  const perModelEvents = result.progressEvents.filter(e => e.model);
+  log('/review-multi partial-fail: has per-model events', perModelEvents.length > 0, `perModel=${perModelEvents.length}`);
+  log('/review-multi partial-fail: has failed status', perModelEvents.some(e => e.status === 'failed'));
+  log('/review-multi partial-fail: has done status', perModelEvents.some(e => e.status === 'done'));
+  log('/review-multi partial-fail: completion count reflects partial success',
+    result.progress.some(p => /已完成\s*1\s*\/\s*2/.test(p)),
+    result.progress.find(p => /已完成/.test(p)) || '(none)');
+}
+
+async function testReviewMultiAllFail() {
+  // D1: All reviewers fail — should return error, no merge
+  const result = await postSSEWithRetry('/review-multi', {
+    models: ['mock-fail-1', 'mock-fail-2'],
+    orchestratorModel: 'mock-fail-1',
+    jd: SAMPLE_JD,
+    baseResume: SAMPLE_RESUME,
+    updatedResume: SAMPLE_RESUME,
+    resumeLibrary: [],
+    instructions: '',
+    reviewInstructions: '',
+    previouslySubmitted: '',
+    mock: true,
+    testFailModels: ['mock-fail-1', 'mock-fail-2'],
+  });
+
+  log('/review-multi all-fail: error returned', !!result.error, result.error || '(none)');
+  log('/review-multi all-fail: no merge content', result.text.length < 50, `length=${result.text.length}`);
+  const perModelEvents = result.progressEvents.filter(e => e.model);
+  // Check that each model's final status is 'failed' (may have pending events before)
+  const lastStatusPerModel = {};
+  for (const e of perModelEvents) { lastStatusPerModel[e.model] = e.status; }
+  const allFailed = Object.values(lastStatusPerModel).length > 0 && Object.values(lastStatusPerModel).every(s => s === 'failed');
+  log('/review-multi all-fail: all models ended as failed', allFailed,
+    JSON.stringify(lastStatusPerModel));
+}
+
 async function testApplyReview(reviewComments) {
   // Use mock:true for deterministic format — the regex parsing is fragile
   // with real LLM output that may not strictly follow [REPLACE]<<<...>>>...[/REPLACE].
@@ -2901,6 +2956,10 @@ async function main() {
     await maybe(testReviewWithInstructions, generated);
     await delay(RATE_LIMIT_DELAY);
     await maybe(testReviewMulti, generated);
+    await delay(RATE_LIMIT_DELAY);
+    await maybe(testReviewMultiPartialFailure);
+    await delay(RATE_LIMIT_DELAY);
+    await maybe(testReviewMultiAllFail);
     await delay(RATE_LIMIT_DELAY);
     await maybe(testApplyReview, review);
     await delay(RATE_LIMIT_DELAY);

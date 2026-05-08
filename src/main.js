@@ -2298,7 +2298,7 @@ async function doSave() {
 }
 
 /* ── Review ── */
-const REVIEW_STATUS_ICONS = { pending: '⏳ 排队中', running: '  进行中', done: '✓ 完成' };
+const REVIEW_STATUS_ICONS = { pending: '⏳ 排队中', running: '  进行中', done: '✓ 完成', failed: '✗ 失败' };
 function renderReviewProgress(modelStatus, el) {
   const parts = [];
   for (const [, info] of modelStatus) {

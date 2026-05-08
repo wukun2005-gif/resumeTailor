@@ -379,6 +379,7 @@ router.post('/review-multi', async (req, res) => {
     setupSSE(res);
     const mockModels = (req.body.models || []);
     const mockTotal = mockModels.length || 2;
+    const testFailModels = req.body.testFailModels || [];
     sendSSE(res, { type: 'chunk', text: '正在并行调用多个评审模型...\n\n' });
     // Per-model pending events (use actual model IDs so frontend map keys match)
     for (let i = 0; i < mockTotal; i++) {
@@ -387,12 +388,22 @@ router.post('/review-multi', async (req, res) => {
       sendSSE(res, { type: 'progress', model: modelId, label, status: 'pending' });
     }
     sendSSE(res, { type: 'progress', text: `正在启动并行评审（共 ${mockTotal} 个模型）...` });
+    let succeeded = 0;
     for (let i = 0; i < mockTotal; i++) {
       const modelId = mockModels[i] || `mock-${i}`;
       const label = getConnectionLabel(modelId);
-      sendSSE(res, { type: 'progress', model: modelId, label, status: 'running' });
-      sendSSE(res, { type: 'progress', model: modelId, label, status: 'done' });
-      sendSSE(res, { type: 'progress', text: `已完成 ${i + 1}/${mockTotal} 个模型评审，正在进行合并...` });
+      if (testFailModels.includes(modelId)) {
+        sendSSE(res, { type: 'progress', model: modelId, label, status: 'failed' });
+      } else {
+        sendSSE(res, { type: 'progress', model: modelId, label, status: 'running' });
+        sendSSE(res, { type: 'progress', model: modelId, label, status: 'done' });
+        succeeded++;
+      }
+      sendSSE(res, { type: 'progress', text: `已完成 ${succeeded}/${mockTotal} 个模型评审，正在进行合并...` });
+    }
+    if (succeeded === 0) {
+      sendSSE(res, { type: 'error', message: '所有评审模型均失败' });
+      return res.end();
     }
     sendSSE(res, { type: 'chunk', text: '--- 正在合并评审意见 ---\n\n' });
     const mockText = MOCK.reviewMerge + (hasCoverLetter ? MOCK.reviewMergeCoverLetter : '');
@@ -420,7 +431,7 @@ router.post('/review-multi', async (req, res) => {
       sendSSE(res, { type: 'progress', model, label: getConnectionLabel(model), status: 'pending' });
     });
     sendSSE(res, { type: 'progress', text: `正在启动并行评审（共 ${total} 个模型）...` });
-    const results = await Promise.all(models.map(async (model) => {
+    const results = await Promise.allSettled(models.map(async (model) => {
       sendSSE(res, { type: 'progress', model, label: getConnectionLabel(model), status: 'running' });
       const caller = getModelCaller(model);
       const result = await caller(user, () => {}, { system, maxTokens: 3072, userBlocks, reasoning: resolvedReasoning });
@@ -429,6 +440,26 @@ router.post('/review-multi', async (req, res) => {
       sendSSE(res, { type: 'progress', text: `已完成 ${completed}/${total} 个模型评审，正在进行合并...` });
       return { model, text: result.text, usage: result.usage };
     }));
+
+    // Separate successful and failed results
+    const successfulResults = [];
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        successfulResults.push(r.value);
+      } else {
+        // Find the model for this failed result by matching position
+        const idx = results.indexOf(r);
+        const failedModel = models[idx];
+        sendSSE(res, { type: 'progress', model: failedModel, label: getConnectionLabel(failedModel), status: 'failed' });
+      }
+    }
+    if (successfulResults.length === 0) {
+      sendSSE(res, { type: 'error', message: '所有评审模型均失败' });
+      return res.end();
+    }
+    // Replace results array with only successful ones for merge
+    results.length = 0;
+    results.push(...successfulResults);
 
     // Merge using orchestrator (with system message for Anthropic caching)
     sendSSE(res, { type: 'chunk', text: '--- 正在合并评审意见 ---\n\n' });
