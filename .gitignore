@@ -3,6 +3,8 @@ node_modules/
 .env
 dist/
 .codebuddy/
+.clinerules/
+.github/copilot/
 DEV_PRINCIPLES.md
 config/user-models.json
 artifacts/
