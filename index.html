@@ -296,14 +296,14 @@
       </details>
 
       <!-- Preprocessing Chat Section -->
-      <div class="chat-section" id="preprocessChatSection" style="display:none">
-        <h4>和预处理助手对话（确认/追问）</h4>
+      <details class="chat-section" id="preprocessChatSection" style="display:none">
+        <summary>和预处理助手对话（确认/追问）</summary>
         <div id="preprocessChatHistory" class="chat-history"></div>
         <div class="chat-input-row">
           <textarea id="preprocessChatInput" rows="4" placeholder="回答预处理助手的问题，或追问..."></textarea>
           <button id="preprocessChatSendBtn" class="btn-primary btn-sm">发送</button>
         </div>
-      </div>
+      </details>
 
       <div class="form-row" id="manualResumeRow" style="display:none">
         <label>手动输入简历内容（如 .pages 文件无法解析时使用）</label>
@@ -317,6 +317,12 @@
         <button id="analyzeJdBtn" class="btn-secondary">分析 JD</button>
         <span id="orchestratorQueryStatus" class="status-text"></span>
       </div>
+
+      <!-- JD Analysis Report (collapsible) -->
+      <details id="jdAnalysisSection" style="display:none" class="remember-state">
+        <summary>JD 分析报告<span id="jdAnalysisStatus" style="font-size:0.85rem;color:#666;margin-left:12px;"></span></summary>
+        <div id="jdAnalysisContent"></div>
+      </details>
 
       <details class="collapsible remember-state" id="genInstructionsDetails">
         <summary>生成指令（简历/求职信生成的注意事项）</summary>
@@ -365,12 +371,6 @@
           <button id="generateBtn" class="btn-primary btn-lg" disabled>生成简历</button>
         </div>
       </div>
-
-      <!-- JD Analysis Report (collapsible) -->
-      <details id="jdAnalysisSection" style="display:none" class="remember-state">
-        <summary>JD 分析报告<span id="jdAnalysisStatus" style="font-size:0.85rem;color:#666;margin-left:12px;"></span></summary>
-        <div id="jdAnalysisContent"></div>
-      </details>
     </section>
 
     <!-- Output Section -->
