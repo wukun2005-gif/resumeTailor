@@ -422,7 +422,8 @@ router.post('/review-multi', async (req, res) => {
     const resolvedReasoning = resolveReasoning(reasoning, '/review-multi');
     const { system, user, userBlocks } = getReviewPromptConcise({ jd, originalResume: baseResume, updatedResume, resumeLibrary, instructions, reviewInstructions, previouslySubmitted });
 
-    // Run all reviewers in parallel with per-model progress tracking
+    // Run reviewers with per-model progress tracking and provider-based concurrency control
+    // Group by API hostname: same provider serial, different providers parallel (D2)
     const total = models.length;
     let completed = 0;
     sendSSE(res, { type: 'chunk', text: '正在并行调用多个评审模型...\n\n' });
@@ -431,7 +432,18 @@ router.post('/review-multi', async (req, res) => {
       sendSSE(res, { type: 'progress', model, label: getConnectionLabel(model), status: 'pending' });
     });
     sendSSE(res, { type: 'progress', text: `正在启动并行评审（共 ${total} 个模型）...` });
-    const results = await Promise.allSettled(models.map(async (model) => {
+
+    // Group models by provider hostname to avoid rate limit conflicts
+    const groups = {};
+    models.forEach(model => {
+      const conn = connectionRegistry.get(normalizeConnectionId(model));
+      let provider;
+      try { provider = new URL(conn?.url || 'https://default').hostname; } catch { provider = 'default'; }
+      if (!groups[provider]) groups[provider] = [];
+      groups[provider].push(model);
+    });
+
+    async function runReviewer(model) {
       sendSSE(res, { type: 'progress', model, label: getConnectionLabel(model), status: 'running' });
       const caller = getModelCaller(model);
       const result = await caller(user, () => {}, { system, maxTokens: 3072, userBlocks, reasoning: resolvedReasoning });
@@ -439,27 +451,28 @@ router.post('/review-multi', async (req, res) => {
       sendSSE(res, { type: 'progress', model, label: getConnectionLabel(model), status: 'done' });
       sendSSE(res, { type: 'progress', text: `已完成 ${completed}/${total} 个模型评审，正在进行合并...` });
       return { model, text: result.text, usage: result.usage };
-    }));
+    }
 
-    // Separate successful and failed results
-    const successfulResults = [];
-    for (const r of results) {
-      if (r.status === 'fulfilled') {
-        successfulResults.push(r.value);
-      } else {
-        // Find the model for this failed result by matching position
-        const idx = results.indexOf(r);
-        const failedModel = models[idx];
-        sendSSE(res, { type: 'progress', model: failedModel, label: getConnectionLabel(failedModel), status: 'failed' });
+    // Run groups in parallel, but models within each group are serial
+    const groupResults = await Promise.all(
+      Object.values(groups).map(group =>
+        group.reduce((chain, model) => chain.then(async acc => {
+          try { acc.push(await runReviewer(model)); } catch { /* skip failed */ }
+          return acc;
+        }), Promise.resolve([]))
+      )
+    );
+    // Flatten and separate successful/failed
+    const results = groupResults.flat();
+    for (const model of models) {
+      if (!results.some(r => r.model === model)) {
+        sendSSE(res, { type: 'progress', model, label: getConnectionLabel(model), status: 'failed' });
       }
     }
-    if (successfulResults.length === 0) {
+    if (results.length === 0) {
       sendSSE(res, { type: 'error', message: '所有评审模型均失败' });
       return res.end();
     }
-    // Replace results array with only successful ones for merge
-    results.length = 0;
-    results.push(...successfulResults);
 
     // Merge using orchestrator (with system message for Anthropic caching)
     sendSSE(res, { type: 'chunk', text: '--- 正在合并评审意见 ---\n\n' });
