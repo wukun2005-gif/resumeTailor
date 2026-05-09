@@ -109,7 +109,6 @@ const els = {
   jdChatSection: $('jdChatSection'), jdChatHistory: $('jdChatHistory'),
   jdChatInput: $('jdChatInput'), jdChatSendBtn: $('jdChatSendBtn'),
   githubChatSection: $('githubChatSection'), githubChatHistory: $('githubChatHistory'),
-  githubChatInput: $('githubChatInput'), githubChatSendBtn: $('githubChatSendBtn'),
 };
 
 let libraryFiles = [];
@@ -121,6 +120,7 @@ let savedSessionTotalText = ''; // 保存流式期间被覆盖的session total�
 let jdInfo = null; // cached JD extraction result
 let genChatMessages = []; // Generator chat context
 let htmlChatMessages = []; // HTML chat context
+let githubChatMode = false; // false=query mode, true=chat mode
 let lastHtmlContent = ''; // Last generated HTML for chat context
 let uploadedFileData = null; // { mimeType, data } for PDF/image upload
 let baseResumeCache = new Map(); // key=filename, value={content, modified}
@@ -1071,8 +1071,7 @@ function bindEvents() {
   // M3: Analysis chat event listeners
   if (els.jdChatSendBtn) els.jdChatSendBtn.addEventListener('click', doJdChat);
   if (els.jdChatInput) els.jdChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doJdChat(); } });
-  if (els.githubChatSendBtn) els.githubChatSendBtn.addEventListener('click', doGithubChat);
-  if (els.githubChatInput) els.githubChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doGithubChat(); } });
+  // githubChatInput removed — merged into githubQueryInput (mode-aware)
   els.htmlPdfUpload.addEventListener('change', handlePdfUpload);
   els.openPdfBtn.addEventListener('click', (e) => {
     console.log('openPdfBtn click event fired');
@@ -1132,7 +1131,7 @@ function bindEvents() {
     if (document.visibilityState === 'hidden') persistDraftState(true);
   });
   // Auto-resize chat textareas (max 300px)
-  for (const ta of [els.genChatInput, els.chatInput, els.htmlChatInput, els.preprocessChatInput, els.jdChatInput, els.githubChatInput]) {
+  for (const ta of [els.genChatInput, els.chatInput, els.htmlChatInput, els.preprocessChatInput, els.jdChatInput]) {
     if (ta) ta.addEventListener('input', () => autoResize(ta, 300));
   }
   // Auto-resize instruction/JD textareas (max 600px)
@@ -1179,8 +1178,10 @@ function bindEvents() {
   // GitHub MCP events
   if (els.githubTestBtn) els.githubTestBtn.addEventListener('click', handleGithubTest);
   if (els.githubDisconnectBtn) els.githubDisconnectBtn.addEventListener('click', handleGithubDisconnect);
-  if (els.githubAnalyzeBtn) els.githubAnalyzeBtn.addEventListener('click', handleGithubAnalyze);
-  if (els.githubQueryInput) els.githubQueryInput.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleGithubAnalyze(); } });
+  if (els.githubAnalyzeBtn) els.githubAnalyzeBtn.addEventListener('click', () => { githubChatMode ? doGithubChat() : handleGithubAnalyze(); });
+  if (els.githubQueryInput) els.githubQueryInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); githubChatMode ? doGithubChat() : handleGithubAnalyze(); }
+  });
 }
 
 /* ── AI 预处理 UI 控制 ── */
@@ -1326,7 +1327,6 @@ function lockAllButtons() {
   els.htmlChatSendBtn.disabled = true;
   if (els.preprocessChatSendBtn) els.preprocessChatSendBtn.disabled = true;
   if (els.jdChatSendBtn) els.jdChatSendBtn.disabled = true;
-  if (els.githubChatSendBtn) els.githubChatSendBtn.disabled = true;
 
   // 禁用其他操作按钮
   els.loadLibraryBtn.disabled = true;
@@ -1363,7 +1363,6 @@ function unlockAllButtons() {
   els.htmlChatSendBtn.disabled = false;
   if (els.preprocessChatSendBtn) els.preprocessChatSendBtn.disabled = false;
   if (els.jdChatSendBtn) els.jdChatSendBtn.disabled = false;
-  if (els.githubChatSendBtn) els.githubChatSendBtn.disabled = false;
 
   // 恢复其他操作按钮
   els.loadLibraryBtn.disabled = false;
@@ -2458,6 +2457,10 @@ async function handleGithubAnalyze() {
       els.githubChatSection.style.display = '';
       els.githubChatHistory.innerHTML = '';
     }
+    // Switch input to chat mode
+    githubChatMode = true;
+    els.githubQueryInput.placeholder = '追问项目详情、技术匹配度、素材库建议... (Ctrl+Enter 发送)';
+    els.githubAnalyzeBtn.textContent = '发送';
   } catch (err) {
     els.githubAnalysisStatusText.textContent = ' — 分析失败';
     els.githubAnalysisContent.innerHTML = `<p style="color:#b91c1c">分析失败: ${escHtml(err.message)}</p>`;
@@ -2533,12 +2536,12 @@ function appendJdChatBubble(role, text) {
 
 /* ── M3: GitHub Analysis Chat ── */
 async function doGithubChat() {
-  const msg = els.githubChatInput.value.trim();
+  const msg = els.githubQueryInput.value.trim();
   if (!msg || isStreaming) return;
 
   githubChatMessages.push({ role: 'user', content: msg });
   appendGithubChatBubble('user', msg);
-  els.githubChatInput.value = '';
+  els.githubQueryInput.value = '';
 
   lockAllButtons();
   const aiDiv = appendGithubChatBubble('ai', '思考中...');
@@ -2573,7 +2576,7 @@ async function doGithubChat() {
       const hist = els.githubChatHistory;
       hist.removeChild(hist.lastChild);
       hist.removeChild(hist.lastChild);
-      els.githubChatInput.value = msg;
+      els.githubQueryInput.value = msg;
       const retryRow = document.createElement('div');
       retryRow.className = 'chat-retry-row';
       showRetryButton(retryRow, () => doGithubChat());
