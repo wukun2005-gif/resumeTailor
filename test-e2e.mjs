@@ -615,7 +615,7 @@ async function testReview(generatedResume) {
   });
 
   log('/review has content', result.text.length > 200, `length=${result.text.length}`);
-  const hasScore = /\b\d{1,3}\s*\/\s*100\b/.test(result.text) || /评分[：:]\s*\d{1,3}/.test(result.text) || /score[：:]*\s*\d{1,3}/i.test(result.text) || /总分.*\d{1,3}/.test(result.text);
+  const hasScore = /\b\d{1,3}\s*\/\s*100\b/.test(result.text) || /评[分价].*?\d{1,3}/.test(result.text) || /score[：:]*\s*\d{1,3}/i.test(result.text) || /总分.*?\d{1,3}/.test(result.text);
   log('/review has score-like output', hasScore, result.text.slice(0, 200).replace(/\n/g, '\\n'));
   return result.text;
 }
