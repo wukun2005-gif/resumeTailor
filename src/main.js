@@ -1048,7 +1048,7 @@ function bindEvents() {
   els.regenerateBtn.addEventListener('click', doGenerate);
   els.analyzeJdBtn.addEventListener('click', doAnalyzeJd);
   els.orchestratorQueryBtn.addEventListener('click', handleOrchestratorQuery);
-  els.orchestratorQueryInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleOrchestratorQuery(); });
+  els.orchestratorQueryInput.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleOrchestratorQuery(); } });
   els.jdImageUpload.addEventListener('change', handleJdImageUpload);
   if (els.jdImageUseAi) {
     els.jdImageUseAi.addEventListener('change', () => {
@@ -1180,7 +1180,7 @@ function bindEvents() {
   if (els.githubTestBtn) els.githubTestBtn.addEventListener('click', handleGithubTest);
   if (els.githubDisconnectBtn) els.githubDisconnectBtn.addEventListener('click', handleGithubDisconnect);
   if (els.githubAnalyzeBtn) els.githubAnalyzeBtn.addEventListener('click', handleGithubAnalyze);
-  if (els.githubQueryInput) els.githubQueryInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleGithubAnalyze(); });
+  if (els.githubQueryInput) els.githubQueryInput.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleGithubAnalyze(); } });
 }
 
 /* ── AI 预处理 UI 控制 ── */
