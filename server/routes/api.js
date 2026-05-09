@@ -4,7 +4,7 @@ import { initAnthropic, callAnthropic } from '../services/anthropic.js';
 import { initOpenAICompat, callOpenAICompat } from '../services/openai-compat.js';
 import { readFileContent, listResumeFiles } from '../services/fileReader.js';
 import { getLibraryDigest, appendToDigestCache, getAiPreprocessedLibrary, saveAiDigestCache, readRawLibraryFiles } from '../services/libraryCache.js';
-import { getResumeGenerationPrompt, getReviewPrompt, getReviewPromptConcise, getReviewMergePrompt, getHtmlGenerationPrompt, getApplyReviewPrompt, getLibraryPreprocessPrompt, getRouteIntentPrompt, getAnalyzeJdPrompt, getGithubAgentPrompt } from '../prompts/templates.js';
+import { getResumeGenerationPrompt, getReviewPrompt, getReviewPromptConcise, getReviewMergePrompt, getHtmlGenerationPrompt, getApplyReviewPrompt, getLibraryPreprocessPrompt, getRouteIntentPrompt, getAnalyzeJdPrompt, getGithubAgentPrompt, getJdAnalyzerChatSystem, getGithubAnalyzerChatSystem } from '../prompts/templates.js';
 import { setPiiConfig, getPiiEntries, sanitizeRequestBody, sanitizeLibrary, sanitizeMessages, createStreamRestorer } from '../services/piiSanitizer.js';
 import * as mcpClient from '../services/mcp-client.js';
 import { runAgentLoop } from '../services/agent-loop.js';
@@ -532,6 +532,8 @@ router.post('/chat', async (req, res) => {
       review:    { maxTokens: 4096, system: '你是简历评审助手。回答简明扼要，不超过3段。不要重新生成整份简历。' },
       generator: { maxTokens: 4096, system: '你是简历修改助手。如果需要修改简历，只输出修改后的完整简历并用===== 简历正文 =====标记。简短问答不需要标记。' },
       html:      { maxTokens: 8192, system: '你是HTML排版助手。如需修改HTML，输出完整HTML文档。仅回答问题时简短回复。' },
+      'jd-analyzer':     { maxTokens: 4096, system: getJdAnalyzerChatSystem() },
+      'github-analyzer': { maxTokens: 4096, system: getGithubAnalyzerChatSystem() },
     };
     const config = chatConfigs[chatType] || { maxTokens: 8192 };
     const caller = getModelCaller(model);

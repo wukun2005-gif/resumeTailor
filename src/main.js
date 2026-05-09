@@ -105,6 +105,11 @@ const els = {
   githubQueryInput: $('githubQueryInput'), githubAnalyzeBtn: $('githubAnalyzeBtn'),
   githubAnalyzeStatus: $('githubAnalyzeStatus'), githubAnalysisSection: $('githubAnalysisSection'),
   githubAnalysisStatusText: $('githubAnalysisStatusText'), githubAnalysisContent: $('githubAnalysisContent'),
+  // M3: Analysis chat elements
+  jdChatSection: $('jdChatSection'), jdChatHistory: $('jdChatHistory'),
+  jdChatInput: $('jdChatInput'), jdChatSendBtn: $('jdChatSendBtn'),
+  githubChatSection: $('githubChatSection'), githubChatHistory: $('githubChatHistory'),
+  githubChatInput: $('githubChatInput'), githubChatSendBtn: $('githubChatSendBtn'),
 };
 
 let libraryFiles = [];
@@ -123,6 +128,8 @@ let jdImageLastBatch = null;
 let jdOcrWorkerPromise = null;
 let preprocessChatMessages = []; // Preprocessor chat context
 let lastAnalysisResult = null; // S1: JD Analyzer result for passing to generate
+let jdChatMessages = []; // M3: JD Analyzer chat context
+let githubChatMessages = []; // M3: GitHub Analyzer chat context
 
 /* ── Session Token & Cost Tracking ── */
 let sessionUsage = { totalInput: 0, totalOutput: 0, totalCost: 0 };
@@ -326,6 +333,8 @@ function clearWorkspaceState() {
   els.genNotesSection.style.display = 'none';
   els.genNotesSection.open = false;
   els.htmlChatSection.style.display = 'none';
+  if (els.jdChatSection) els.jdChatSection.style.display = 'none';
+  if (els.githubChatSection) els.githubChatSection.style.display = 'none';
   els.saveFilenameRow.style.display = 'none';
 
   els.resumeStatusAndToken.textContent = '';
@@ -343,6 +352,8 @@ function clearWorkspaceState() {
   els.chatHistory.innerHTML = '';
   els.genChatHistory.innerHTML = '';
   els.htmlChatHistory.innerHTML = '';
+  if (els.jdChatHistory) els.jdChatHistory.innerHTML = '';
+  if (els.githubChatHistory) els.githubChatHistory.innerHTML = '';
 
   if (els.jdImageUpload) els.jdImageUpload.value = '';
   if (els.jdImageUseAi) els.jdImageUseAi.checked = true;
@@ -351,6 +362,8 @@ function clearWorkspaceState() {
   chatMessages = [];
   genChatMessages = [];
   htmlChatMessages = [];
+  jdChatMessages = [];
+  githubChatMessages = [];
   lastHtmlContent = '';
   uploadedFileData = null;
   baseResumeContent = '';
@@ -1055,6 +1068,11 @@ function bindEvents() {
   els.generateHtmlBtn.addEventListener('click', doGenerateHtml);
   els.htmlChatSendBtn.addEventListener('click', doHtmlChat);
   els.htmlChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doHtmlChat(); } });
+  // M3: Analysis chat event listeners
+  if (els.jdChatSendBtn) els.jdChatSendBtn.addEventListener('click', doJdChat);
+  if (els.jdChatInput) els.jdChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doJdChat(); } });
+  if (els.githubChatSendBtn) els.githubChatSendBtn.addEventListener('click', doGithubChat);
+  if (els.githubChatInput) els.githubChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doGithubChat(); } });
   els.htmlPdfUpload.addEventListener('change', handlePdfUpload);
   els.openPdfBtn.addEventListener('click', (e) => {
     console.log('openPdfBtn click event fired');
@@ -1307,7 +1325,9 @@ function lockAllButtons() {
   els.chatSendBtn.disabled = true;
   els.htmlChatSendBtn.disabled = true;
   if (els.preprocessChatSendBtn) els.preprocessChatSendBtn.disabled = true;
-  
+  if (els.jdChatSendBtn) els.jdChatSendBtn.disabled = true;
+  if (els.githubChatSendBtn) els.githubChatSendBtn.disabled = true;
+
   // 禁用其他操作按钮
   els.loadLibraryBtn.disabled = true;
   els.exportDigestBtn.disabled = true;
@@ -1342,7 +1362,9 @@ function unlockAllButtons() {
   els.chatSendBtn.disabled = false;
   els.htmlChatSendBtn.disabled = false;
   if (els.preprocessChatSendBtn) els.preprocessChatSendBtn.disabled = false;
-  
+  if (els.jdChatSendBtn) els.jdChatSendBtn.disabled = false;
+  if (els.githubChatSendBtn) els.githubChatSendBtn.disabled = false;
+
   // 恢复其他操作按钮
   els.loadLibraryBtn.disabled = false;
   if (els.githubAnalyzeBtn) els.githubAnalyzeBtn.disabled = false;
@@ -2187,6 +2209,16 @@ async function doAnalyzeJd() {
 
     renderAnalysisReport(result);
     persistDraftState(true);
+
+    // M3: Seed JD analysis chat context and show chat section
+    jdChatMessages = [
+      { role: 'user', content: `请分析以下 JD 的匹配度。\n\nJD:\n${jd}` },
+      { role: 'assistant', content: JSON.stringify(result, null, 2) },
+    ];
+    if (els.jdChatSection) {
+      els.jdChatSection.style.display = '';
+      els.jdChatHistory.innerHTML = '';
+    }
   } catch (err) {
     els.jdAnalysisStatus.textContent = ' — 分析失败';
     els.jdAnalysisContent.innerHTML = `<p style="color:#b91c1c">分析失败: ${escHtml(err.message)}</p>`;
@@ -2416,6 +2448,16 @@ async function handleGithubAnalyze() {
     els.githubAnalysisContent.innerHTML = formatted;
     els.githubAnalysisStatusText.textContent = ' — 分析完成';
     setGithubAnalyzeStatus('分析完成', 'success');
+
+    // M3: Seed GitHub analysis chat context and show chat section
+    githubChatMessages = [
+      { role: 'user', content: query },
+      { role: 'assistant', content: result.text || '' },
+    ];
+    if (els.githubChatSection) {
+      els.githubChatSection.style.display = '';
+      els.githubChatHistory.innerHTML = '';
+    }
   } catch (err) {
     els.githubAnalysisStatusText.textContent = ' — 分析失败';
     els.githubAnalysisContent.innerHTML = `<p style="color:#b91c1c">分析失败: ${escHtml(err.message)}</p>`;
@@ -2423,6 +2465,132 @@ async function handleGithubAnalyze() {
   } finally {
     unlockAllButtons();
   }
+}
+
+/* ── M3: JD Analysis Chat ── */
+async function doJdChat() {
+  const msg = els.jdChatInput.value.trim();
+  if (!msg || isStreaming) return;
+
+  jdChatMessages.push({ role: 'user', content: msg });
+  appendJdChatBubble('user', msg);
+  els.jdChatInput.value = '';
+
+  lockAllButtons();
+  const aiDiv = appendJdChatBubble('ai', '思考中...');
+  aiDiv.classList.add('loading');
+
+  try {
+    const routerModel = getJdAnalysisModelId();
+    const model = requireConfiguredConnection(routerModel, 'Orchestrator');
+    const result = await api.streamRequest('/api/chat', {
+      model, mock: els.mockMode.checked,
+      messages: truncateHistory(jdChatMessages),
+      chatType: 'jd-analyzer',
+    }, (chunk, full) => {
+      aiDiv.classList.remove('loading');
+      aiDiv.textContent = full;
+      els.jdChatHistory.scrollTop = els.jdChatHistory.scrollHeight;
+    });
+    jdChatMessages.push({ role: 'assistant', content: result.text || result });
+
+    if (result.usage) {
+      sessionUsage.totalInput += (result.usage.input || 0);
+      sessionUsage.totalOutput += (result.usage.output || 0);
+      const pricing = PRICING[result.model || model] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
+  } catch (e) {
+    if (api.isNetworkError(e)) {
+      aiDiv.textContent = '连接中断，发送失败';
+      jdChatMessages.pop();
+      const hist = els.jdChatHistory;
+      hist.removeChild(hist.lastChild);
+      hist.removeChild(hist.lastChild);
+      els.jdChatInput.value = msg;
+      const retryRow = document.createElement('div');
+      retryRow.className = 'chat-retry-row';
+      showRetryButton(retryRow, () => doJdChat());
+      hist.appendChild(retryRow);
+    } else {
+      aiDiv.textContent = '错误: ' + e.message;
+    }
+  } finally {
+    unlockAllButtons();
+  }
+}
+
+function appendJdChatBubble(role, text) {
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}`;
+  div.textContent = text;
+  els.jdChatHistory.appendChild(div);
+  els.jdChatHistory.scrollTop = els.jdChatHistory.scrollHeight;
+  return div;
+}
+
+/* ── M3: GitHub Analysis Chat ── */
+async function doGithubChat() {
+  const msg = els.githubChatInput.value.trim();
+  if (!msg || isStreaming) return;
+
+  githubChatMessages.push({ role: 'user', content: msg });
+  appendGithubChatBubble('user', msg);
+  els.githubChatInput.value = '';
+
+  lockAllButtons();
+  const aiDiv = appendGithubChatBubble('ai', '思考中...');
+  aiDiv.classList.add('loading');
+
+  try {
+    const routerModel = getJdAnalysisModelId();
+    const model = requireConfiguredConnection(routerModel, 'Orchestrator');
+    const result = await api.streamRequest('/api/chat', {
+      model, mock: els.mockMode.checked,
+      messages: truncateHistory(githubChatMessages),
+      chatType: 'github-analyzer',
+    }, (chunk, full) => {
+      aiDiv.classList.remove('loading');
+      aiDiv.textContent = full;
+      els.githubChatHistory.scrollTop = els.githubChatHistory.scrollHeight;
+    });
+    githubChatMessages.push({ role: 'assistant', content: result.text || result });
+
+    if (result.usage) {
+      sessionUsage.totalInput += (result.usage.input || 0);
+      sessionUsage.totalOutput += (result.usage.output || 0);
+      const pricing = PRICING[result.model || model] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
+  } catch (e) {
+    if (api.isNetworkError(e)) {
+      aiDiv.textContent = '连接中断，发送失败';
+      githubChatMessages.pop();
+      const hist = els.githubChatHistory;
+      hist.removeChild(hist.lastChild);
+      hist.removeChild(hist.lastChild);
+      els.githubChatInput.value = msg;
+      const retryRow = document.createElement('div');
+      retryRow.className = 'chat-retry-row';
+      showRetryButton(retryRow, () => doGithubChat());
+      hist.appendChild(retryRow);
+    } else {
+      aiDiv.textContent = '错误: ' + e.message;
+    }
+  } finally {
+    unlockAllButtons();
+  }
+}
+
+function appendGithubChatBubble(role, text) {
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}`;
+  div.textContent = text;
+  els.githubChatHistory.appendChild(div);
+  els.githubChatHistory.scrollTop = els.githubChatHistory.scrollHeight;
+  return div;
 }
 
 /* ── Generate Resume ── */

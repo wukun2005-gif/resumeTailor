@@ -810,6 +810,34 @@ async function testChatUndefinedType() {
   log('/chat chatType=undefined uses default config', result.text.length > 10, `length=${result.text.length}`);
 }
 
+async function testChatJdAnalyzerType() {
+  const result = await postSSEWithRetry('/chat', {
+    model: MODEL,
+    chatType: 'jd-analyzer',
+    mock: true,
+    messages: [
+      { role: 'user', content: '请分析这个 JD 的匹配度' },
+      { role: 'assistant', content: '{"matchVerdict":"有戏","strengths":["AI产品经验丰富"]}' },
+      { role: 'user', content: '短板怎么补？' },
+    ],
+  });
+  log('/chat chatType=jd-analyzer returns content', result.text.length > 10, `length=${result.text.length}`);
+}
+
+async function testChatGithubAnalyzerType() {
+  const result = await postSSEWithRetry('/chat', {
+    model: MODEL,
+    chatType: 'github-analyzer',
+    mock: true,
+    messages: [
+      { role: 'user', content: '看看我 GitHub 上有什么能写进简历的' },
+      { role: 'assistant', content: '推荐项目：resume-tailor (128 stars)' },
+      { role: 'user', content: '第二个项目详细说说' },
+    ],
+  });
+  log('/chat chatType=github-analyzer returns content', result.text.length > 10, `length=${result.text.length}`);
+}
+
 async function testConnectionFallbackWithoutModel() {
   const result = await postSSEWithRetry('/chat', {
     chatType: 'review',
@@ -3296,6 +3324,8 @@ async function main() {
     await maybe(testChatGeneratorType);
     await maybe(testChatHtmlType);
     await maybe(testChatUndefinedType);
+    await maybe(testChatJdAnalyzerType);
+    await maybe(testChatGithubAnalyzerType);
     await delay(RATE_LIMIT_DELAY);
     await maybe(testConnectionFallbackWithoutModel);
 

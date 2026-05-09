@@ -343,6 +343,16 @@
         <div id="jdAnalysisContent"></div>
       </details>
 
+      <!-- JD Analysis Chat (appears after initial analysis) -->
+      <div class="chat-section" id="jdChatSection" style="display:none">
+        <h4>和 JD 分析助手对话（追问/讨论）</h4>
+        <div id="jdChatHistory" class="chat-history"></div>
+        <div class="chat-input-row">
+          <textarea id="jdChatInput" rows="3" placeholder="追问 JD 匹配度、短板建议、投递策略..."></textarea>
+          <button id="jdChatSendBtn" class="btn-primary btn-sm">发送</button>
+        </div>
+      </div>
+
       <!-- GitHub Project Analysis -->
       <h4 class="section-subtitle">GitHub 项目分析</h4>
       <div class="github-query-row">
@@ -354,6 +364,16 @@
         <summary>GitHub 分析报告<span id="githubAnalysisStatusText" style="font-size:0.85rem;color:#666;margin-left:12px;"></span></summary>
         <div id="githubAnalysisContent"></div>
       </details>
+
+      <!-- GitHub Analysis Chat (appears after initial analysis) -->
+      <div class="chat-section" id="githubChatSection" style="display:none">
+        <h4>和 GitHub 分析助手对话（追问/讨论）</h4>
+        <div id="githubChatHistory" class="chat-history"></div>
+        <div class="chat-input-row">
+          <textarea id="githubChatInput" rows="3" placeholder="追问项目详情、技术匹配度、素材库建议..."></textarea>
+          <button id="githubChatSendBtn" class="btn-primary btn-sm">发送</button>
+        </div>
+      </div>
 
       <details class="collapsible remember-state" id="genInstructionsDetails">
         <summary>生成指令（简历/求职信生成的注意事项）</summary>
