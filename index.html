@@ -331,7 +331,7 @@
       <!-- Orchestrator Query Input + Analyze Button -->
       <h4 class="section-subtitle">JD 分析助手</h4>
       <div class="orchestrator-query-row">
-        <input type="text" id="orchestratorQueryInput" placeholder="输入指令，如「这个岗位怎么样？」「帮我分析匹配度」 (Ctrl+Enter 发送)" class="orchestrator-query-input">
+        <textarea id="orchestratorQueryInput" rows="2" placeholder="输入指令，如「这个岗位怎么样？」「帮我分析匹配度」 (Ctrl+Enter 发送)" class="orchestrator-query-input"></textarea>
         <button id="orchestratorQueryBtn" class="btn-secondary">提交</button>
         <button id="analyzeJdBtn" class="btn-secondary">分析 JD</button>
         <span id="orchestratorQueryStatus" class="status-text"></span>
@@ -356,7 +356,7 @@
       <!-- GitHub Project Analysis -->
       <h4 class="section-subtitle">GitHub 项目分析</h4>
       <div class="github-query-row">
-        <input type="text" id="githubQueryInput" placeholder="如「看看我 GitHub 上有什么可以写进简历的」「分析我的开源项目」" class="orchestrator-query-input">
+        <textarea id="githubQueryInput" rows="2" placeholder="如「看看我 GitHub 上有什么可以写进简历的」「分析我的开源项目」(Ctrl+Enter 发送)" class="orchestrator-query-input"></textarea>
         <button id="githubAnalyzeBtn" class="btn-secondary">分析 GitHub</button>
         <span id="githubAnalyzeStatus" class="status-text"></span>
       </div>
