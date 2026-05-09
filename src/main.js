@@ -1062,17 +1062,17 @@ function bindEvents() {
   els.reviewBtn.addEventListener('click', doReview);
   els.applyReviewBtn.addEventListener('click', doApplyReview);
   els.chatSendBtn.addEventListener('click', doChat);
-  els.chatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doChat(); } });
+  els.chatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doChat(); } });
   els.genChatSendBtn.addEventListener('click', doGenChat);
-  els.genChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doGenChat(); } });
+  els.genChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doGenChat(); } });
   els.generateHtmlBtn.addEventListener('click', doGenerateHtml);
   els.htmlChatSendBtn.addEventListener('click', doHtmlChat);
-  els.htmlChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doHtmlChat(); } });
+  els.htmlChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doHtmlChat(); } });
   // M3: Analysis chat event listeners
   if (els.jdChatSendBtn) els.jdChatSendBtn.addEventListener('click', doJdChat);
-  if (els.jdChatInput) els.jdChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doJdChat(); } });
+  if (els.jdChatInput) els.jdChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doJdChat(); } });
   if (els.githubChatSendBtn) els.githubChatSendBtn.addEventListener('click', doGithubChat);
-  if (els.githubChatInput) els.githubChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doGithubChat(); } });
+  if (els.githubChatInput) els.githubChatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doGithubChat(); } });
   els.htmlPdfUpload.addEventListener('change', handlePdfUpload);
   els.openPdfBtn.addEventListener('click', (e) => {
     console.log('openPdfBtn click event fired');
@@ -2487,6 +2487,7 @@ async function doJdChat() {
       model, mock: els.mockMode.checked,
       messages: truncateHistory(jdChatMessages),
       chatType: 'jd-analyzer',
+      dir: els.libraryPath?.value?.trim() || '',
     }, (chunk, full) => {
       aiDiv.classList.remove('loading');
       aiDiv.textContent = full;
@@ -2550,6 +2551,7 @@ async function doGithubChat() {
       model, mock: els.mockMode.checked,
       messages: truncateHistory(githubChatMessages),
       chatType: 'github-analyzer',
+      dir: els.libraryPath?.value?.trim() || '',
     }, (chunk, full) => {
       aiDiv.classList.remove('loading');
       aiDiv.textContent = full;

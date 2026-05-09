@@ -526,7 +526,7 @@ router.post('/chat', async (req, res) => {
     if (piiEntries.length > 0) {
       sanitizeMessages(req.body.messages, piiEntries);
     }
-    const { model, messages, chatType, reasoning } = req.body;
+    const { model, messages, chatType, reasoning, dir } = req.body;
     const resolvedReasoning = resolveReasoning(reasoning, '/chat');
     const chatConfigs = {
       review:    { maxTokens: 4096, system: '你是简历评审助手。回答简明扼要，不超过3段。不要重新生成整份简历。' },
@@ -536,10 +536,22 @@ router.post('/chat', async (req, res) => {
       'github-analyzer': { maxTokens: 4096, system: getGithubAnalyzerChatSystem() },
     };
     const config = chatConfigs[chatType] || { maxTokens: 8192 };
+
+    // For analysis chats, load library digest and inject into system prompt
+    let systemPrompt = config.system;
+    if ((chatType === 'jd-analyzer' || chatType === 'github-analyzer') && dir) {
+      try {
+        const validDir = validatePath(dir);
+        const { digest } = await getLibraryDigest(validDir, []);
+        if (digest) {
+          systemPrompt += `\n\n===== 候选人简历素材库（已加载，可直接引用）=====\n${digest}\n\n注意：素材库已自动加载，你可以直接分析其中的内容。不要要求用户再次提供简历素材。`;
+        }
+      } catch (_) { /* library not available, proceed without it */ }
+    }
     const caller = getModelCaller(model);
     const restorer = piiEntries.length > 0 ? createStreamRestorer(piiEntries, text => sendSSE(res, { type: 'chunk', text })) : null;
     const onChunk = restorer ? chunk => restorer.push(chunk) : chunk => sendSSE(res, { type: 'chunk', text: chunk });
-    const result = await caller(null, onChunk, { messages, maxTokens: config.maxTokens, system: config.system, reasoning: resolvedReasoning });
+    const result = await caller(null, onChunk, { messages, maxTokens: config.maxTokens, system: systemPrompt, reasoning: resolvedReasoning });
     if (restorer) restorer.end();
     sendSSE(res, { type: 'done', usage: result.usage, model });
   } catch (err) {
