@@ -3121,6 +3121,63 @@ async function testGithubAgentPromptWithUsername() {
   log('Prompt with JD+username: JD in user message', withJd.user.includes('Senior Engineer'));
 }
 
+// M4: Auto-reconnect when token provided but MCP not connected
+async function testGithubAnalyzeAutoReconnect() {
+  console.log('\n[Test Group] M4: GitHub analyze auto-reconnect');
+
+  try {
+    // Test 1: No token + MCP not connected → "MCP 未初始化" error
+    const res1 = await fetch(`${BASE}/github/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'google-studio-google', query: 'test', mock: false }),
+    });
+
+    if (res1.status === 404 || res1.headers.get('content-type')?.includes('html')) {
+      log('M4 auto-reconnect: server not running (skipped)', true, 'server not available');
+      return;
+    }
+
+    // Without token: should get JSON error about MCP 未初始化
+    const contentType1 = res1.headers.get('content-type') || '';
+    if (contentType1.includes('json')) {
+      const data1 = await res1.json();
+      log('M4: no token → MCP 未初始化 error', data1.error?.includes('MCP 未初始化'), data1.error);
+    } else {
+      // SSE response with error event
+      const text1 = await res1.text();
+      const parsed1 = parseSSEText(text1);
+      log('M4: no token → MCP 未初始化 error', parsed1.error?.includes('MCP 未初始化'), parsed1.error);
+    }
+
+    // Test 2: Invalid token + MCP not connected → auto-reconnect attempted, fails with token error
+    const res2 = await fetch(`${BASE}/github/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'google-studio-google', query: 'test', githubToken: 'ghp_invalid_fake_token_for_test', mock: false }),
+    });
+
+    const contentType2 = res2.headers.get('content-type') || '';
+    let errorMsg2;
+    if (contentType2.includes('json')) {
+      const data2 = await res2.json();
+      errorMsg2 = data2.error;
+    } else {
+      const text2 = await res2.text();
+      const parsed2 = parseSSEText(text2);
+      errorMsg2 = parsed2.error;
+    }
+
+    // Should NOT be "MCP 未初始化" — it should have attempted auto-init
+    log('M4: invalid token → NOT "MCP 未初始化"', !errorMsg2?.includes('MCP 未初始化'), errorMsg2);
+    // Should be a token/init related error (GitHub API failure, etc.)
+    log('M4: invalid token → init/token error', errorMsg2?.includes('初始化') || errorMsg2?.includes('Token') || errorMsg2?.includes('GitHub') || errorMsg2?.includes('401'), errorMsg2);
+
+  } catch (err) {
+    log('M4 auto-reconnect: server not running (skipped)', true, err.message);
+  }
+}
+
 async function testToolCallingAnthropicFormat() {
   console.log('\n[Test Group] Tool-calling: Anthropic SDK passes tools');
 
@@ -3399,6 +3456,7 @@ async function main() {
     await maybe(testGithubApiStatusEndpoint);
     await maybe(testGithubApiMockMode);
     await maybe(testGithubAgentPromptWithUsername);
+    await maybe(testGithubAnalyzeAutoReconnect);
 
   } catch (err) {
     console.error('\nFATAL:', err.message);

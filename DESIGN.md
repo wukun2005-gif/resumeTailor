@@ -1312,6 +1312,7 @@ node test-e2e.mjs
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-05-09 | M4 GitHub MCP 自动重连：页面刷新/服务重启后 MCP 连接丢失时，`/github/analyze` 自动使用前端传入的 token 重新初始化 MCP Client；前端 `handleGithubAnalyze()` 从 localStorage 读取已保存的 token 并随请求发送 | server/routes/api.js, src/main.js, test-e2e.mjs, DESIGN.md | |
 | 2026-05-09 | M2 GitHub 用户名自动获取：MCP Client init 时通过 GitHub REST API `/user` 自动获取用户名并缓存；`/github/init` 和 `/github/status` 返回 `username` 字段；`/github/analyze` 自动注入用户名到 Agent prompt；前端连接成功后显示用户名 | server/services/mcp-client.js, server/routes/api.js, src/api.js, src/main.js, test-e2e.mjs, DESIGN.md | |
 | 2026-05-08 | S2 Orchestrator Query 输入框：新增自然语言 query 输入框，用户输入指令后经意图路由分发到对应 Skill；「分析 JD」按钮回归直接调 Analyzer（跳过意图路由）；README 突出"意图识别→Skill调用"设计思想 | index.html, src/main.js, src/style.css, README.md, DESIGN.md, backlog.md | |
 | 2026-05-09 | M1 MCP Client — GitHub 集成：新增 MCP Client 服务（spawn GitHub MCP Server 子进程 + stdio 通信）；三个 AI SDK 均新增 tool-calling 支持（Anthropic/OpenAI/Gemini）；Agent Loop 引擎（多轮 LLM + 工具调用循环，最大 10 轮）；GitHub Agent 端点（/api/github/init、analyze、status、disconnect）；前端设置 UI（GitHub Token 加密存储 + 连接测试）+ GitHub 项目分析入口；8 个新增测试 | server/services/mcp-client.js, server/services/agent-loop.js, server/services/anthropic.js, server/services/gemini.js, server/services/openai-compat.js, server/routes/api.js, server/prompts/templates.js, src/api.js, src/main.js, index.html, src/style.css, test-e2e.mjs, DESIGN.md, package.json | |

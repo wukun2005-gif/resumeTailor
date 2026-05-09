@@ -2384,9 +2384,11 @@ async function handleGithubAnalyze() {
     const jd = getNormalizedJdText();
     const routerModel = getJdAnalysisModelId();
     const model = mock ? 'google-studio-google' : requireConfiguredConnection(routerModel, 'Orchestrator');
+    // Include saved token for auto-reconnect if MCP was disconnected (e.g. after page refresh)
+    const githubToken = mock ? '' : await state.getCredential('githubToken');
 
     const result = await api.githubAnalyze(
-      { model, query, jd, mock },
+      { model, query, jd, githubToken, mock },
       // onChunk: stream text to the analysis content area
       (text) => {
         const existing = els.githubAnalysisContent.textContent || '';

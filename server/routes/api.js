@@ -1066,9 +1066,13 @@ router.post('/github/analyze', async (req, res) => {
   setupSSE(res);
 
   try {
-    // Ensure MCP client is connected
+    // Ensure MCP client is connected — auto-reconnect if token provided
     if (!mcpClient.isConnected()) {
-      throw new Error('GitHub MCP 未初始化，请先在设置中配置 GitHub Token 并点击连接');
+      const token = req.body.githubToken;
+      if (!token) {
+        throw new Error('GitHub MCP 未初始化，请先在设置中配置 GitHub Token 并点击连接');
+      }
+      await mcpClient.init(token);
     }
 
     // Get read-only tools
