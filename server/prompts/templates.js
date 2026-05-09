@@ -460,7 +460,7 @@ ${libraryBlock}
 // M1: GitHub Agent — MCP Tool-calling Agent for GitHub data
 // ============================================================================
 
-const GITHUB_AGENT_SYSTEM = `你是一个技术简历助手，可以访问用户的 GitHub 数据。你的任务是帮助用户从 GitHub 仓库中找到可以写进简历的项目经历和亮点。
+const GITHUB_AGENT_SYSTEM_TEMPLATE = (username) => `你是一个技术简历助手，可以访问用户 ${username ? `"${username}"` : ''} 的 GitHub 数据。你的任务是帮助用户从 GitHub 仓库中找到可以写进简历的项目经历和亮点。
 
 你有以下 GitHub 工具可以调用：
 - search_repositories: 搜索仓库（按关键词、语言等）
@@ -500,8 +500,5 @@ export function getGithubAgentPrompt({ query, jd, githubUsername }) {
   if (jd) {
     user += `\n\n当前目标 JD（用于匹配参考）:\n${jd.slice(0, 2000)}`;
   }
-  if (githubUsername) {
-    user += `\n\nGitHub 用户名: ${githubUsername}`;
-  }
-  return { system: GITHUB_AGENT_SYSTEM, user };
+  return { system: GITHUB_AGENT_SYSTEM_TEMPLATE(githubUsername), user };
 }

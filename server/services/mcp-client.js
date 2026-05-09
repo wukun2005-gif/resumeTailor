@@ -12,11 +12,35 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 let client = null;
 let transport = null;
 let currentToken = null;
+let cachedUsername = null;
 
 /**
  * Initialize (or reinitialize) the MCP client with a GitHub token.
  * Spawns the GitHub MCP Server as a child process via stdio.
  */
+/**
+ * Fetch the GitHub username associated with a token.
+ * Calls GitHub REST API GET /user.
+ * @param {string} token - GitHub personal access token
+ * @returns {Promise<string>} GitHub login username
+ */
+async function fetchUsername(token) {
+  const res = await fetch('https://api.github.com/user', {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'resume-tailor',
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`GitHub API /user 失败 (${res.status}): ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  if (!data.login) throw new Error('GitHub API 未返回用户名');
+  return data.login;
+}
+
 export async function init(token) {
   if (!token) throw new Error('GitHub token is required');
 
@@ -27,6 +51,9 @@ export async function init(token) {
   if (client) await close();
 
   currentToken = token;
+
+  // Fetch username before spawning MCP server (lightweight, validates token)
+  cachedUsername = await fetchUsername(token);
 
   transport = new StdioClientTransport({
     command: 'npx',
@@ -79,6 +106,7 @@ export async function close() {
     transport = null;
   }
   currentToken = null;
+  cachedUsername = null;
 }
 
 /**
@@ -86,4 +114,12 @@ export async function close() {
  */
 export function isConnected() {
   return client !== null;
+}
+
+/**
+ * Get the cached GitHub username (from init).
+ * Returns null if not initialized.
+ */
+export function getUsername() {
+  return cachedUsername;
 }

@@ -3095,9 +3095,30 @@ async function testGithubApiStatusEndpoint() {
     const data = await res.json();
     log('GitHub status: returns connected field', 'connected' in data, JSON.stringify(data));
     log('GitHub status: connected is boolean', typeof data.connected === 'boolean');
+    log('GitHub status: returns username field', 'username' in data, `username=${data.username} (null=未用新代码初始化)`);
   } catch (err) {
     log('GitHub status: server not running (skipped)', true, err.message);
   }
+}
+
+async function testGithubAgentPromptWithUsername() {
+  console.log('\n[Test Group] GitHub Agent prompt: username injection');
+
+  const { getGithubAgentPrompt } = await import('./server/prompts/templates.js');
+
+  // With username — should be in system prompt, NOT in user message
+  const withUser = getGithubAgentPrompt({ query: '帮我看看项目', githubUsername: 'testuser123' });
+  log('Prompt with username: in system prompt', withUser.system.includes('testuser123'), withUser.system.slice(0, 200));
+  log('Prompt with username: NOT in user message', !withUser.user.includes('testuser123'));
+
+  // Without username — system prompt should not mention a specific username
+  const noUser = getGithubAgentPrompt({ query: '帮我看看项目' });
+  log('Prompt without username: no specific username in system', !noUser.system.includes('"testuser123"'));
+
+  // With JD and username — both in correct places
+  const withJd = getGithubAgentPrompt({ query: '分析项目', jd: 'Senior Engineer position', githubUsername: 'octocat' });
+  log('Prompt with JD+username: username in system', withJd.system.includes('octocat'));
+  log('Prompt with JD+username: JD in user message', withJd.user.includes('Senior Engineer'));
 }
 
 async function testToolCallingAnthropicFormat() {
@@ -3377,6 +3398,7 @@ async function main() {
     await maybe(testToolCallingGeminiFormat);
     await maybe(testGithubApiStatusEndpoint);
     await maybe(testGithubApiMockMode);
+    await maybe(testGithubAgentPromptWithUsername);
 
   } catch (err) {
     console.error('\nFATAL:', err.message);

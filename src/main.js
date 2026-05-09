@@ -2342,7 +2342,9 @@ async function handleGithubTest() {
   try {
     const result = await api.githubInit(token);
     if (result.success) {
-      setGithubStatus(`已连接 (${result.tools?.length || 0} 个工具可用)`, 'success');
+      const toolCount = result.tools?.length || 0;
+      const userLabel = result.username ? ` · ${result.username}` : '';
+      setGithubStatus(`已连接${userLabel} (${toolCount} 个工具可用)`, 'success');
       if (els.githubDisconnectBtn) els.githubDisconnectBtn.style.display = '';
       if (els.githubToolsInfo && result.tools?.length) {
         els.githubToolsInfo.style.display = '';

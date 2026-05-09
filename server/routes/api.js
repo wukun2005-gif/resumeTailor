@@ -1032,8 +1032,9 @@ router.post('/github/init', async (req, res) => {
     await mcpClient.init(token);
     const allTools = await mcpClient.listTools();
     const readTools = allTools.filter(t => GITHUB_READ_TOOLS.includes(t.name));
+    const username = mcpClient.getUsername();
 
-    res.json({ success: true, tools: readTools.map(t => ({ name: t.name, description: t.description })) });
+    res.json({ success: true, username, tools: readTools.map(t => ({ name: t.name, description: t.description })) });
   } catch (err) {
     res.status(500).json({ success: false, error: `GitHub MCP 初始化失败: ${err.message}` });
   }
@@ -1044,7 +1045,7 @@ router.post('/github/init', async (req, res) => {
  * Check MCP Client connection status.
  */
 router.get('/github/status', (req, res) => {
-  res.json({ connected: mcpClient.isConnected() });
+  res.json({ connected: mcpClient.isConnected(), username: mcpClient.getUsername() });
 });
 
 /**
@@ -1083,8 +1084,9 @@ router.post('/github/analyze', async (req, res) => {
     const sdkType = getSdkType(connectionId);
     const caller = getModelCaller(connectionId);
 
-    // Build prompt
-    const { system, user } = getGithubAgentPrompt({ query, jd, githubUsername });
+    // Build prompt — use cached username from token if not explicitly provided
+    const resolvedUsername = githubUsername || mcpClient.getUsername();
+    const { system, user } = getGithubAgentPrompt({ query, jd, githubUsername: resolvedUsername });
 
     // Run agent loop
     const result = await runAgentLoop({

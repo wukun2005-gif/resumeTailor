@@ -380,7 +380,7 @@ export async function analyzeJd(model, jd, resumeLibrary, mock = false) {
 
 /**
  * Initialize GitHub MCP Client with a personal access token.
- * Returns: { success, tools? }
+ * Returns: { success, username?, tools? }
  */
 export async function githubInit(token) {
   const res = await fetch('/api/github/init', {
