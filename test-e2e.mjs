@@ -3154,6 +3154,9 @@ async function testGithubAnalyzeAutoReconnect() {
   console.log('\n[Test Group] M4: GitHub analyze auto-reconnect');
 
   try {
+    // Disconnect MCP first to ensure clean state
+    await fetch(`${BASE}/github/disconnect`, { method: 'POST' }).catch(() => {});
+
     // Test 1: No token + MCP not connected → "MCP 未初始化" error
     const res1 = await fetch(`${BASE}/github/analyze`, {
       method: 'POST',
