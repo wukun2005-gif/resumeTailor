@@ -416,9 +416,10 @@ export async function callGemini(prompt, onChunk, opts = {}) {
           if (part.type === 'text') parts.push({ text: part.text });
           else if (part.type === 'file') parts.push({ inlineData: { mimeType: part.mimeType, data: part.data } });
           // Handle function call parts (from tool-calling round trips)
-          else if (part.type === 'functionCall') parts.push({ functionCall: part.functionCall });
+          // Check both type field and direct property (agent loop uses direct property)
+          else if (part.type === 'functionCall' || part.functionCall) parts.push({ functionCall: part.functionCall });
           // Handle function response parts (tool results)
-          else if (part.type === 'functionResponse') parts.push({ functionResponse: part.functionResponse });
+          else if (part.type === 'functionResponse' || part.functionResponse) parts.push({ functionResponse: part.functionResponse });
         }
       }
       return {

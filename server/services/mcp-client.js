@@ -62,6 +62,7 @@ export async function init(token) {
       ...process.env,
       GITHUB_PERSONAL_ACCESS_TOKEN: token,
     },
+    stderr: 'pipe',
   });
 
   client = new Client(
@@ -70,6 +71,15 @@ export async function init(token) {
   );
 
   await client.connect(transport);
+
+  // Drain stderr to prevent buffer buildup and log MCP server errors
+  if (transport.stderr) {
+    transport.stderr.on('data', (chunk) => {
+      const msg = chunk.toString().trim();
+      if (msg) console.error('[MCP stderr]', msg);
+    });
+    transport.stderr.resume();
+  }
 }
 
 /**

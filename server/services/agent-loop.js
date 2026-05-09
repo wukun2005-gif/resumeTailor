@@ -175,7 +175,6 @@ export async function runAgentLoop({
         const toolResultText = await executeTool(tc.name, tc.input);
         toolCallHistory.push({ name: tc.name, args: tc.input, result: toolResultText });
         responseParts.push({
-          type: 'functionResponse',
           functionResponse: {
             name: tc.name,
             response: { result: toolResultText },
