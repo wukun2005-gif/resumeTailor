@@ -99,6 +99,12 @@ const els = {
   cfgPiiEmail: $('cfgPiiEmail'), cfgPiiPhone: $('cfgPiiPhone'),
   cfgPiiLinkedin: $('cfgPiiLinkedin'), cfgPiiGithub: $('cfgPiiGithub'),
   cfgPiiWebsite: $('cfgPiiWebsite'), cfgPiiOther: $('cfgPiiOther'),
+  // GitHub MCP
+  cfgGithubToken: $('cfgGithubToken'), githubTestBtn: $('githubTestBtn'), githubDisconnectBtn: $('githubDisconnectBtn'),
+  githubTestStatus: $('githubTestStatus'), githubToolsInfo: $('githubToolsInfo'), githubToolsList: $('githubToolsList'),
+  githubQueryInput: $('githubQueryInput'), githubAnalyzeBtn: $('githubAnalyzeBtn'),
+  githubAnalyzeStatus: $('githubAnalyzeStatus'), githubAnalysisSection: $('githubAnalysisSection'),
+  githubAnalysisStatusText: $('githubAnalysisStatusText'), githubAnalysisContent: $('githubAnalysisContent'),
 };
 
 let libraryFiles = [];
@@ -985,6 +991,12 @@ async function restoreState() {
     await state.migrateCredential(k);
   }
 
+  // Restore GitHub token
+  if (els.cfgGithubToken) {
+    els.cfgGithubToken.value = await state.getCredential('githubToken');
+    await state.migrateCredential('githubToken');
+  }
+
   restoreDetailsState();
   restoreDraftState();
 }
@@ -1146,6 +1158,11 @@ function bindEvents() {
       state.set('preprocessInstructions', els.preprocessInstructions.value);
     });
   }
+  // GitHub MCP events
+  if (els.githubTestBtn) els.githubTestBtn.addEventListener('click', handleGithubTest);
+  if (els.githubDisconnectBtn) els.githubDisconnectBtn.addEventListener('click', handleGithubDisconnect);
+  if (els.githubAnalyzeBtn) els.githubAnalyzeBtn.addEventListener('click', handleGithubAnalyze);
+  if (els.githubQueryInput) els.githubQueryInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleGithubAnalyze(); });
 }
 
 /* ── AI 预处理 UI 控制 ── */
@@ -1294,6 +1311,8 @@ function lockAllButtons() {
   // 禁用其他操作按钮
   els.loadLibraryBtn.disabled = true;
   els.exportDigestBtn.disabled = true;
+  if (els.githubAnalyzeBtn) els.githubAnalyzeBtn.disabled = true;
+  if (els.githubTestBtn) els.githubTestBtn.disabled = true;
   
   // 保存并覆盖session total信息
   if (els.sessionTotalInfo) {
@@ -1326,6 +1345,8 @@ function unlockAllButtons() {
   
   // 恢复其他操作按钮
   els.loadLibraryBtn.disabled = false;
+  if (els.githubAnalyzeBtn) els.githubAnalyzeBtn.disabled = false;
+  if (els.githubTestBtn) els.githubTestBtn.disabled = false;
   // exportDigestBtn的状态由素材库是否加载决定，在loadLibrary中设置
 }
 
@@ -1402,6 +1423,11 @@ async function saveSettings() {
   await state.setCredential('pii_github', els.cfgPiiGithub.value.trim());
   await state.setCredential('pii_website', els.cfgPiiWebsite.value.trim());
   await state.setCredential('pii_other', els.cfgPiiOther.value.trim());
+
+  // Save GitHub token (encrypted)
+  if (els.cfgGithubToken) {
+    await state.setCredential('githubToken', els.cfgGithubToken.value.trim());
+  }
 
   const savedBtnText = els.settingsSave.textContent;
   els.settingsSave.textContent = '连接中...';
@@ -2290,6 +2316,109 @@ function renderAnalysisReport(data) {
 function escHtml(str) {
   if (!str) return '';
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/* ── M1: GitHub MCP Client ── */
+
+function setGithubStatus(text, type = '') {
+  if (!els.githubTestStatus) return;
+  els.githubTestStatus.textContent = text;
+  els.githubTestStatus.className = type ? `status-text ${type}` : 'status-text';
+}
+
+function setGithubAnalyzeStatus(text, type = '') {
+  if (!els.githubAnalyzeStatus) return;
+  els.githubAnalyzeStatus.textContent = text;
+  els.githubAnalyzeStatus.className = type ? `status-text ${type}` : 'status-text';
+}
+
+async function handleGithubTest() {
+  const token = els.cfgGithubToken?.value.trim();
+  if (!token) return setGithubStatus('请输入 GitHub Token', 'error');
+
+  els.githubTestBtn.disabled = true;
+  setGithubStatus('正在连接...');
+
+  try {
+    const result = await api.githubInit(token);
+    if (result.success) {
+      setGithubStatus(`已连接 (${result.tools?.length || 0} 个工具可用)`, 'success');
+      if (els.githubDisconnectBtn) els.githubDisconnectBtn.style.display = '';
+      if (els.githubToolsInfo && result.tools?.length) {
+        els.githubToolsInfo.style.display = '';
+        els.githubToolsList.textContent = result.tools.map(t => t.name).join(', ');
+      }
+    }
+  } catch (err) {
+    setGithubStatus(`连接失败: ${err.message}`, 'error');
+  } finally {
+    els.githubTestBtn.disabled = false;
+  }
+}
+
+async function handleGithubDisconnect() {
+  try {
+    await api.githubDisconnect();
+    setGithubStatus('已断开', '');
+    if (els.githubDisconnectBtn) els.githubDisconnectBtn.style.display = 'none';
+    if (els.githubToolsInfo) els.githubToolsInfo.style.display = 'none';
+  } catch (err) {
+    setGithubStatus(`断开失败: ${err.message}`, 'error');
+  }
+}
+
+async function handleGithubAnalyze() {
+  const query = els.githubQueryInput?.value.trim() || '帮我看看 GitHub 上有什么可以写进简历的项目';
+  const mock = els.mockMode.checked;
+
+  lockAllButtons();
+  setGithubAnalyzeStatus('正在分析...');
+  els.githubAnalysisSection.style.display = '';
+  els.githubAnalysisSection.open = true;
+  els.githubAnalysisStatusText.textContent = ' — 分析中...';
+  els.githubAnalysisContent.innerHTML = '<p style="color:#6b7280">正在连接 GitHub 并分析项目...</p>';
+
+  try {
+    const jd = getNormalizedJdText();
+    const routerModel = getJdAnalysisModelId();
+    const model = mock ? 'google-studio-google' : requireConfiguredConnection(routerModel, 'Orchestrator');
+
+    const result = await api.githubAnalyze(
+      { model, query, jd, mock },
+      // onChunk: stream text to the analysis content area
+      (text) => {
+        const existing = els.githubAnalysisContent.textContent || '';
+        els.githubAnalysisContent.textContent = existing + text;
+      },
+      // onProgress
+      null,
+      // onTimeout
+      () => { setGithubAnalyzeStatus('AI 响应较慢，请稍候...'); },
+      // onStreamResumed
+      () => { setGithubAnalyzeStatus('正在分析...'); }
+    );
+
+    // Track token usage
+    if (result.usage) {
+      sessionUsage.totalInput += (result.usage.input || 0);
+      sessionUsage.totalOutput += (result.usage.output || 0);
+      const pricing = PRICING[model] || { input: 0, output: 0 };
+      sessionUsage.totalCost += (result.usage.input || 0) * pricing.input + (result.usage.output || 0) * pricing.output;
+      updateSessionTotal();
+    }
+
+    // Format the result as HTML
+    const formatted = (result.text || '').replace(/\n/g, '<br>');
+    els.githubAnalysisContent.innerHTML = formatted;
+    els.githubAnalysisStatusText.textContent = ' — 分析完成';
+    setGithubAnalyzeStatus('分析完成', 'success');
+  } catch (err) {
+    els.githubAnalysisStatusText.textContent = ' — 分析失败';
+    els.githubAnalysisContent.innerHTML = `<p style="color:#b91c1c">分析失败: ${escHtml(err.message)}</p>`;
+    setGithubAnalyzeStatus('分析失败', 'error');
+  } finally {
+    unlockAllButtons();
+  }
 }
 
 /* ── Generate Resume ── */

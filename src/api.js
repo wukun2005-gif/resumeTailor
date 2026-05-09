@@ -373,3 +373,54 @@ export async function analyzeJd(model, jd, resumeLibrary, mock = false) {
   if (!res.ok) throw new Error(data.error || 'JD 分析失败');
   return data;
 }
+
+// ============================================================================
+// GitHub MCP Client (M1)
+// ============================================================================
+
+/**
+ * Initialize GitHub MCP Client with a personal access token.
+ * Returns: { success, tools? }
+ */
+export async function githubInit(token) {
+  const res = await fetch('/api/github/init', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'GitHub MCP 初始化失败');
+  return data;
+}
+
+/**
+ * Check GitHub MCP Client connection status.
+ * Returns: { connected: boolean }
+ */
+export async function githubStatus() {
+  const res = await fetch('/api/github/status');
+  return await res.json();
+}
+
+/**
+ * Disconnect GitHub MCP Client.
+ */
+export async function githubDisconnect() {
+  const res = await fetch('/api/github/disconnect', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '断开连接失败');
+  return data;
+}
+
+/**
+ * Run GitHub Agent analysis (SSE streaming).
+ * @param {object} params - { model, query, jd, githubUsername, mock }
+ * @param {Function} onChunk - Streaming text callback
+ * @param {Function} [onProgress] - Progress callback
+ * @param {Function} [onTimeout] - Timeout warning callback
+ * @param {Function} [onStreamResumed] - Stream resumed callback
+ * @returns {{ text, usage, model }}
+ */
+export async function githubAnalyze(params, onChunk, onProgress, onTimeout, onStreamResumed) {
+  return streamRequest('/api/github/analyze', params, onChunk, onProgress, onTimeout, onStreamResumed);
+}

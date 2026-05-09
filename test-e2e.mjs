@@ -2966,6 +2966,189 @@ async function testModelFallbackLogic() {
 }
 
 // ============================================================================
+// M1: GitHub MCP Client + Agent Loop Tests
+// ============================================================================
+
+async function testAgentLoopToolFormatConversion() {
+  console.log('\n[Test Group] Agent Loop: tool format conversion');
+
+  const { toolsToAnthropicFormat, toolsToOpenAIFormat, toolsToGeminiFormat } = await import('./server/services/agent-loop.js');
+
+  const mcpTools = [
+    { name: 'search_repositories', description: 'Search repos', inputSchema: { type: 'object', properties: { query: { type: 'string' } } } },
+    { name: 'get_file_contents', description: 'Get file', inputSchema: { type: 'object', properties: { path: { type: 'string' } } } },
+  ];
+
+  // Anthropic format
+  const anthropicTools = toolsToAnthropicFormat(mcpTools);
+  log('Anthropic format: has input_schema', anthropicTools[0].input_schema?.type === 'object', JSON.stringify(Object.keys(anthropicTools[0])));
+  log('Anthropic format: no parameters key', !('parameters' in anthropicTools[0]));
+
+  // OpenAI format
+  const openaiTools = toolsToOpenAIFormat(mcpTools);
+  log('OpenAI format: has type=function', openaiTools[0].type === 'function');
+  log('OpenAI format: has function.parameters', openaiTools[0].function?.parameters?.type === 'object');
+
+  // Gemini format
+  const geminiTools = toolsToGeminiFormat(mcpTools);
+  log('Gemini format: has parameters', geminiTools[0].parameters?.type === 'object');
+  log('Gemini format: has name', geminiTools[0].name === 'search_repositories');
+}
+
+async function testAgentLoopMaxIterations() {
+  console.log('\n[Test Group] Agent Loop: max iterations safety');
+
+  const { runAgentLoop } = await import('./server/services/agent-loop.js');
+
+  // Mock caller that always returns tool calls (infinite loop scenario)
+  let callCount = 0;
+  const mockCaller = async (prompt, onChunk, opts) => {
+    callCount++;
+    return {
+      text: 'I need to call a tool',
+      usage: { input: 10, output: 5 },
+      toolCalls: [{ id: `tc_${callCount}`, name: 'search_repositories', input: { query: 'test' } }],
+      stopReason: 'tool_use',
+    };
+  };
+
+  const mockExecuteTool = async () => 'mock tool result';
+
+  const result = await runAgentLoop({
+    caller: mockCaller,
+    sdkType: 'anthropic',
+    system: 'test system',
+    userMessage: 'test user',
+    mcpTools: [{ name: 'search_repositories', description: 'Search', inputSchema: { type: 'object', properties: {} } }],
+    executeTool: mockExecuteTool,
+    maxIterations: 3,
+  });
+
+  log('Agent loop respects maxIterations', result.iterations === 3, `iterations=${result.iterations}`);
+  log('Agent loop tracks tool call history', result.toolCallHistory.length === 3, `history=${result.toolCallHistory.length}`);
+  log('Agent loop accumulates usage', result.usage.input > 0, `input=${result.usage.input}`);
+}
+
+async function testAgentLoopNoToolCalls() {
+  console.log('\n[Test Group] Agent Loop: no tool calls (single LLM response)');
+
+  const { runAgentLoop } = await import('./server/services/agent-loop.js');
+
+  const mockCaller = async (prompt, onChunk, opts) => {
+    if (onChunk) onChunk('Final answer');
+    return {
+      text: 'Final answer',
+      usage: { input: 10, output: 5 },
+    };
+  };
+
+  const result = await runAgentLoop({
+    caller: mockCaller,
+    sdkType: 'openai-compat',
+    system: 'test',
+    userMessage: 'test',
+    mcpTools: [],
+    executeTool: async () => '',
+  });
+
+  log('No tool calls: returns text', result.text === 'Final answer');
+  log('No tool calls: iterations=1', result.iterations === 1);
+  log('No tool calls: empty history', result.toolCallHistory.length === 0);
+}
+
+async function testGithubApiMockMode() {
+  console.log('\n[Test Group] GitHub API: mock mode');
+
+  try {
+    const res = await fetch(`${BASE}/github/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'google-studio-google', query: 'test', mock: true }),
+    });
+
+    const text = await res.text();
+    if (text.startsWith('<!DOCTYPE') || text.startsWith('<html')) {
+      log('GitHub analyze mock: server not running (skipped)', true, 'HTML response');
+      return;
+    }
+
+    const parsed = parseSSEText(text);
+    log('GitHub analyze mock: returns text', parsed.result.length > 0, `length=${parsed.result.length}`);
+    log('GitHub analyze mock: contains project analysis', parsed.result.includes('仿真测试'), `first 100: ${parsed.result.slice(0, 100)}`);
+    log('GitHub analyze mock: has done event', parsed.done === true);
+    log('GitHub analyze mock: no error', parsed.error === null);
+  } catch (err) {
+    log('GitHub analyze mock: server not running (skipped)', true, err.message);
+  }
+}
+
+async function testGithubApiStatusEndpoint() {
+  console.log('\n[Test Group] GitHub API: status endpoint');
+
+  try {
+    const res = await fetch(`${BASE}/github/status`);
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('json')) {
+      log('GitHub status: server not running (skipped)', true, 'non-JSON response');
+      return;
+    }
+    const data = await res.json();
+    log('GitHub status: returns connected field', 'connected' in data, JSON.stringify(data));
+    log('GitHub status: connected is boolean', typeof data.connected === 'boolean');
+  } catch (err) {
+    log('GitHub status: server not running (skipped)', true, err.message);
+  }
+}
+
+async function testToolCallingAnthropicFormat() {
+  console.log('\n[Test Group] Tool-calling: Anthropic SDK passes tools');
+
+  // This test verifies that the Anthropic caller passes tools to the SDK
+  // We can't fully test tool_use responses without a real API, but we can verify the request format
+  const { initAnthropic, callAnthropic } = await import('./server/services/anthropic.js');
+
+  // We can't easily mock the Anthropic SDK's stream method, so we test the format conversion
+  const { toolsToAnthropicFormat } = await import('./server/services/agent-loop.js');
+  const mcpTools = [
+    { name: 'test_tool', description: 'A test tool', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
+  ];
+  const formatted = toolsToAnthropicFormat(mcpTools);
+
+  log('Anthropic tools: correct name', formatted[0].name === 'test_tool');
+  log('Anthropic tools: has description', formatted[0].description === 'A test tool');
+  log('Anthropic tools: input_schema preserved', formatted[0].input_schema.properties.q.type === 'string');
+  log('Anthropic tools: required preserved', formatted[0].input_schema.required[0] === 'q');
+}
+
+async function testToolCallingOpenAIFormat() {
+  console.log('\n[Test Group] Tool-calling: OpenAI format');
+
+  const { toolsToOpenAIFormat } = await import('./server/services/agent-loop.js');
+  const mcpTools = [
+    { name: 'search_code', description: 'Search code', inputSchema: { type: 'object', properties: { query: { type: 'string' } } } },
+  ];
+  const formatted = toolsToOpenAIFormat(mcpTools);
+
+  log('OpenAI tools: type=function', formatted[0].type === 'function');
+  log('OpenAI tools: function.name', formatted[0].function.name === 'search_code');
+  log('OpenAI tools: function.parameters', formatted[0].function.parameters.type === 'object');
+}
+
+async function testToolCallingGeminiFormat() {
+  console.log('\n[Test Group] Tool-calling: Gemini format');
+
+  const { toolsToGeminiFormat } = await import('./server/services/agent-loop.js');
+  const mcpTools = [
+    { name: 'list_commits', description: 'List commits', inputSchema: { type: 'object', properties: { repo: { type: 'string' } } } },
+  ];
+  const formatted = toolsToGeminiFormat(mcpTools);
+
+  log('Gemini tools: has name', formatted[0].name === 'list_commits');
+  log('Gemini tools: has description', formatted[0].description === 'List commits');
+  log('Gemini tools: has parameters', formatted[0].parameters.properties.repo.type === 'string');
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -3183,6 +3366,17 @@ async function main() {
     await maybe(testStreamRestorerCrossChunk);
     await maybe(testPiiMultiValue);
     await maybe(testModelFallbackLogic);
+
+    // ========== M1 GitHub MCP + Agent Loop 测试 ==========
+    console.log('\n--- M1 GitHub MCP + Agent Loop 测试 ---');
+    await maybe(testAgentLoopToolFormatConversion);
+    await maybe(testAgentLoopMaxIterations);
+    await maybe(testAgentLoopNoToolCalls);
+    await maybe(testToolCallingAnthropicFormat);
+    await maybe(testToolCallingOpenAIFormat);
+    await maybe(testToolCallingGeminiFormat);
+    await maybe(testGithubApiStatusEndpoint);
+    await maybe(testGithubApiMockMode);
 
   } catch (err) {
     console.error('\nFATAL:', err.message);

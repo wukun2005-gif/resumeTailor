@@ -89,7 +89,9 @@ vscCCOpus/
 │   │   ├── gemini.js         # Google GenAI SDK 调用
 │   │   ├── openai-compat.js  # OpenAI 兼容 API (raw fetch)
 │   │   ├── fileReader.js     # 文件读取 (txt/html/pdf/docx/md)
-│   │   └── libraryCache.js   # 素材库 digest 缓存系统
+│   │   ├── libraryCache.js   # 素材库 digest 缓存系统
+│   │   ├── mcp-client.js     # MCP Client（GitHub MCP Server 子进程管理）
+│   │   └── agent-loop.js     # Agent 循环引擎（LLM + tool call 多轮）
 │   └── prompts/
 │       └── templates.js      # 所有 LLM Prompt 模板
 ├── config/                    # 运行时配置（.gitignore，不提交）
@@ -180,6 +182,10 @@ connectionId === 'jiekou-anthropic'      → Anthropic SDK (anthropic.js)
 | POST | `/ocr-jd-images` | JD 图片 OCR 的 AI 兜底（仅用户主动触发） | No |
 | GET | `/default-preprocess-prompt` | 读取默认预处理 prompt 文件 | No |
 | POST | `/preprocess-library` | AI 预处理素材库 | SSE |
+| POST | `/github/init` | 初始化 GitHub MCP Client（传入 token） | No |
+| GET | `/github/status` | 查询 MCP Client 连接状态 | No |
+| POST | `/github/analyze` | GitHub Agent：LLM + tool-calling 分析 GitHub 项目 | SSE |
+| POST | `/github/disconnect` | 断开 MCP Client 连接 | No |
 
 ### `/init` 请求格式（新格式）
 ```json
@@ -578,6 +584,80 @@ AI 预处理失败时自动回退到本地预处理，并在系统消息中提�
 - 「分析 JD」按钮位于「生成简历」按钮左侧，secondary 样式
 - 分析报告展示为可折叠 `<details>` 区域，位于 action-bar 下方
 - 匹配度用颜色编码：绿色=有戏，黄色=勉强，红色=没戏
+
+---
+
+## 9.6 MCP Client — GitHub 集成（M1）
+
+### 功能概述
+
+新增 MCP Client 服务，通过 Model Context Protocol 接入 GitHub MCP Server，使 Agent 能够自动读取用户的 GitHub 仓库数据，辅助素材库构建和简历生成。
+
+### 架构设计
+
+```
++-------------------+     stdio      +---------------------------+
+| Express 后端       | <===========> | GitHub MCP Server          |
+| mcp-client.js     |   subprocess  | (npx @modelcontextprotocol|
+| agent-loop.js     |               |  /server-github)           |
++-------------------+               +---------------------------+
+        |
+        | Agent Loop (多轮 LLM + tool call)
+        |
++-------------------+
+| AI SDK callers    |
+| (anthropic/gemini/|
+|  openai-compat)   |
++-------------------+
+```
+
+### 核心组件
+
+1. **`server/services/mcp-client.js`** — MCP Client 封装
+   - `init(token)` — spawn GitHub MCP Server 子进程（stdio transport）
+   - `listTools()` — 列出可用工具
+   - `callTool(name, args)` — 调用工具
+   - `close()` — 关闭连接
+
+2. **`server/services/agent-loop.js`** — Agent 循环引擎
+   - 多轮 LLM 调用 + 工具执行循环
+   - 自动转换 MCP tools 到各 SDK 格式（Anthropic/OpenAI/Gemini）
+   - 最大 10 轮迭代防止死循环
+   - 累计 token 用量统计
+
+3. **Tool-calling 支持** — 三个 AI SDK caller 均新增 `opts.tools` 参数
+   - `anthropic.js` — 流式 `tool_use` 块追踪
+   - `openai-compat.js` — 流式 `tool_calls` 累积
+   - `gemini.js` — `functionDeclarations` + `functionCall` 检测
+
+### 暴露给 LLM 的只读工具
+
+| 工具 | 说明 |
+|------|------|
+| `search_repositories` | 搜索仓库 |
+| `get_file_contents` | 读取仓库文件（如 README） |
+| `list_commits` | 查看提交历史 |
+| `search_code` | 搜索代码 |
+| `search_issues` | 搜索 Issues |
+| `search_users` | 搜索用户 |
+
+写操作工具（create_issue、push_files 等）不暴露给 LLM。
+
+### API 端点
+
+- `POST /api/github/init` — 初始化 MCP Client，传入 GitHub token
+- `GET /api/github/status` — 查询连接状态
+- `POST /api/github/analyze` — 运行 GitHub Agent（SSE 流式）
+- `POST /api/github/disconnect` — 断开连接
+
+### 用户配置
+
+GitHub Token 在设置弹窗中配置，使用 AES-256-GCM 加密存储（复用现有机制）。Token 权限最小化：只需 `repo:read`。
+
+### 前端 UI
+
+- 设置弹窗新增「GitHub 集成」配置区：Token 输入 + 连接测试
+- 输入区新增「GitHub 项目分析」：query 输入框 + 分析按钮 + 折叠报告区域
 
 ---
 
@@ -1233,6 +1313,7 @@ node test-e2e.mjs
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
 | 2026-05-08 | S2 Orchestrator Query 输入框：新增自然语言 query 输入框，用户输入指令后经意图路由分发到对应 Skill；「分析 JD」按钮回归直接调 Analyzer（跳过意图路由）；README 突出"意图识别→Skill调用"设计思想 | index.html, src/main.js, src/style.css, README.md, DESIGN.md, backlog.md | |
+| 2026-05-09 | M1 MCP Client — GitHub 集成：新增 MCP Client 服务（spawn GitHub MCP Server 子进程 + stdio 通信）；三个 AI SDK 均新增 tool-calling 支持（Anthropic/OpenAI/Gemini）；Agent Loop 引擎（多轮 LLM + 工具调用循环，最大 10 轮）；GitHub Agent 端点（/api/github/init、analyze、status、disconnect）；前端设置 UI（GitHub Token 加密存储 + 连接测试）+ GitHub 项目分析入口；8 个新增测试 | server/services/mcp-client.js, server/services/agent-loop.js, server/services/anthropic.js, server/services/gemini.js, server/services/openai-compat.js, server/routes/api.js, server/prompts/templates.js, src/api.js, src/main.js, index.html, src/style.css, test-e2e.mjs, DESIGN.md, package.json | |
 | 2026-05-08 | S1 JD Analyzer：新增 Orchestrator 意图路由（`/api/route-intent`）+ JD Analyzer skill（`/api/analyze-jd`）；前端「分析 JD」按钮 + 折叠报告区域；分析结果自动注入生成指令；7 个 mock 测试 + 3 个 real API 测试 | server/prompts/templates.js, server/routes/api.js, src/api.js, src/main.js, index.html, src/style.css, test-e2e.mjs, DESIGN.md | |
 | 2026-05-08 | D1 多 Reviewer 并行失败容错：`Promise.all` → `Promise.allSettled`，单个 reviewer 失败不丢弃其余结果；失败 reviewer 发 `status: 'failed'` SSE 事件；全部失败时仍发 error；mock 路径新增 `testFailModels` 支持可控测试；前端 `REVIEW_STATUS_ICONS` 新增 `failed` 状态 | server/routes/api.js, src/main.js, test-e2e.mjs, DESIGN.md | 6bb41da |
 | 2026-05-08 | D2 多 Reviewer 并发控制：按 API hostname 分组，同 provider 串行、不同 provider 并行；组内 try/catch 隔离单个失败 | server/routes/api.js, DESIGN.md | 58a2a2d |

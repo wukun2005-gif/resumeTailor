@@ -74,20 +74,51 @@ export async function callAnthropic(prompt, onChunk, opts = {}) {
     }
   }
 
+  // Tool-calling support
+  if (opts.tools && opts.tools.length > 0) {
+    params.tools = opts.tools;
+  }
+
   const stream = client.messages.stream(params);
   let fullText = '';
   let usage = { input: 0, output: 0 };
+  let stopReason = null;
+  // Track tool_use content blocks during streaming
+  const toolUseBlocks = {};
 
   for await (const event of stream) {
-    if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-      const text = event.delta.text;
-      fullText += text;
-      if (onChunk) onChunk(text);
+    if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+      toolUseBlocks[event.index] = {
+        id: event.content_block.id,
+        name: event.content_block.name,
+        inputJson: '',
+      };
+    } else if (event.type === 'content_block_delta') {
+      if (event.delta?.type === 'text_delta') {
+        const text = event.delta.text;
+        fullText += text;
+        if (onChunk) onChunk(text);
+      } else if (event.delta?.type === 'input_json_delta') {
+        const block = toolUseBlocks[event.index];
+        if (block) block.inputJson += event.delta.partial_json;
+      }
     } else if (event.type === 'message_start' && event.message?.usage) {
       usage.input = event.message.usage.input_tokens || 0;
-    } else if (event.type === 'message_delta' && event.usage) {
-      usage.output = event.usage.output_tokens || 0;
+    } else if (event.type === 'message_delta') {
+      if (event.usage) usage.output = event.usage.output_tokens || 0;
+      if (event.delta?.stop_reason) stopReason = event.delta.stop_reason;
     }
   }
-  return { text: fullText, usage };
+
+  // Parse tool calls from accumulated blocks
+  const toolCalls = Object.values(toolUseBlocks).map(b => ({
+    id: b.id,
+    name: b.name,
+    input: b.inputJson ? JSON.parse(b.inputJson) : {},
+  }));
+
+  const result = { text: fullText, usage };
+  if (toolCalls.length > 0) result.toolCalls = toolCalls;
+  if (stopReason) result.stopReason = stopReason;
+  return result;
 }

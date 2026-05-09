@@ -90,6 +90,11 @@ export async function callOpenAICompat(connectionId, prompt, onChunk, opts = {})
   if (opts.reasoning && validReasoning.includes(opts.reasoning)) {
     body.reasoning_effort = opts.reasoning;
   }
+  // Tool-calling support
+  if (opts.tools && opts.tools.length > 0) {
+    body.tools = opts.tools;
+    body.tool_choice = opts.toolChoice || 'auto';
+  }
   if (isAnthropic) {
     body.extra_body = {
       stream_options: { include_usage: true },
@@ -124,6 +129,9 @@ export async function callOpenAICompat(connectionId, prompt, onChunk, opts = {})
   const decoder = new TextDecoder();
   let buffer = '';
   let usage = { input: 0, output: 0 };
+  let stopReason = null;
+  // Track tool calls during streaming (keyed by index)
+  const toolCallChunks = {};
 
   while (true) {
     const { done, value } = await reader.read();
@@ -143,11 +151,25 @@ export async function callOpenAICompat(connectionId, prompt, onChunk, opts = {})
 
       try {
         const parsed = JSON.parse(data);
-        const text = parsed.choices?.[0]?.delta?.content || '';
+        const choice = parsed.choices?.[0];
+        const text = choice?.delta?.content || '';
         if (text) {
           fullText += text;
           if (onChunk) onChunk(text);
         }
+        // Track tool call chunks
+        if (choice?.delta?.tool_calls) {
+          for (const tc of choice.delta.tool_calls) {
+            const idx = tc.index;
+            if (!toolCallChunks[idx]) {
+              toolCallChunks[idx] = { id: tc.id || '', name: '', arguments: '' };
+            }
+            if (tc.id) toolCallChunks[idx].id = tc.id;
+            if (tc.function?.name) toolCallChunks[idx].name = tc.function.name;
+            if (tc.function?.arguments) toolCallChunks[idx].arguments += tc.function.arguments;
+          }
+        }
+        if (choice?.finish_reason) stopReason = choice.finish_reason;
         // Capture usage from the chunk (may appear in final chunks)
         if (parsed.usage) {
           usage.input = parsed.usage.prompt_tokens || usage.input;
@@ -159,7 +181,17 @@ export async function callOpenAICompat(connectionId, prompt, onChunk, opts = {})
     }
   }
 
-  return { text: fullText, usage };
+  // Parse accumulated tool calls
+  const toolCalls = Object.values(toolCallChunks).map(tc => ({
+    id: tc.id,
+    name: tc.name,
+    input: tc.arguments ? JSON.parse(tc.arguments) : {},
+  }));
+
+  const result = { text: fullText, usage };
+  if (toolCalls.length > 0) result.toolCalls = toolCalls;
+  if (stopReason) result.stopReason = stopReason;
+  return result;
 }
 
 /** Convert our internal message format to OpenAI format */

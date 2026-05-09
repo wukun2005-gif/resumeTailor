@@ -415,6 +415,10 @@ export async function callGemini(prompt, onChunk, opts = {}) {
         for (const part of m.content) {
           if (part.type === 'text') parts.push({ text: part.text });
           else if (part.type === 'file') parts.push({ inlineData: { mimeType: part.mimeType, data: part.data } });
+          // Handle function call parts (from tool-calling round trips)
+          else if (part.type === 'functionCall') parts.push({ functionCall: part.functionCall });
+          // Handle function response parts (tool results)
+          else if (part.type === 'functionResponse') parts.push({ functionResponse: part.functionResponse });
         }
       }
       return {
@@ -449,6 +453,16 @@ export async function callGemini(prompt, onChunk, opts = {}) {
       if (config.maxOutputTokens <= budget) {
         config.maxOutputTokens = budget + 4096;
       }
+    }
+    // Tool-calling support: convert to Gemini functionDeclarations format
+    if (opts.tools && opts.tools.length > 0) {
+      config.tools = [{
+        functionDeclarations: opts.tools.map(t => ({
+          name: t.name,
+          description: t.description || '',
+          parameters: t.input_schema || t.parameters || {},
+        })),
+      }];
     }
     const reqParams = { model: currentModel, contents, config };
     if (opts.system) {
@@ -500,15 +514,30 @@ export async function callGemini(prompt, onChunk, opts = {}) {
 
   let fullText = '';
   let usage = { input: 0, output: 0 };
+  const allFunctionCalls = [];
   for await (const chunk of response) {
     const text = chunk.text || '';
     fullText += text;
     if (onChunk) onChunk(text);
+    // Capture function calls from chunks
+    if (chunk.functionCalls) {
+      allFunctionCalls.push(...chunk.functionCalls);
+    }
     // Capture usage metadata from the last chunk
     if (chunk.usageMetadata) {
       usage.input = chunk.usageMetadata.promptTokenCount || 0;
       usage.output = chunk.usageMetadata.candidatesTokenCount || 0;
     }
   }
-  return { text: fullText, usage, model: usedModel };
+
+  const result = { text: fullText, usage, model: usedModel };
+  if (allFunctionCalls.length > 0) {
+    result.toolCalls = allFunctionCalls.map(fc => ({
+      id: `gemini_${fc.name}_${Date.now()}`,
+      name: fc.name,
+      input: fc.args || {},
+    }));
+    result.stopReason = 'tool_use';
+  }
+  return result;
 }

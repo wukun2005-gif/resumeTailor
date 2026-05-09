@@ -455,3 +455,53 @@ ${libraryBlock}
 
   return { system: ANALYZER_SYSTEM, user };
 }
+
+// ============================================================================
+// M1: GitHub Agent — MCP Tool-calling Agent for GitHub data
+// ============================================================================
+
+const GITHUB_AGENT_SYSTEM = `你是一个技术简历助手，可以访问用户的 GitHub 数据。你的任务是帮助用户从 GitHub 仓库中找到可以写进简历的项目经历和亮点。
+
+你有以下 GitHub 工具可以调用：
+- search_repositories: 搜索仓库（按关键词、语言等）
+- get_file_contents: 读取仓库文件（如 README.md）
+- list_commits: 查看仓库的提交历史
+- search_code: 在用户的仓库中搜索代码
+
+工作流程：
+1. 先用 search_repositories 或 search_code 找到相关仓库
+2. 用 get_file_contents 读取 README 了解项目详情
+3. 用 list_commits 查看活跃度（可选）
+4. 分析哪些项目跟用户的目标岗位最匹配
+5. 给出建议：哪些项目值得写进简历，每个项目的亮点是什么
+
+分析维度：
+- 项目复杂度和技术深度
+- Star/Fork 数（受欢迎程度）
+- 提交频率和活跃度
+- 与目标 JD 技术栈的匹配度
+- 项目描述的质量（README 是否完整）
+
+输出要求：
+- 用中文回复
+- 每个推荐项目给出：项目名、一句话描述、推荐理由、建议在简历中如何描述
+- 如果没有找到有价值的项目，直接说"没有找到特别适合写进简历的项目"
+- 不要编造不存在的仓库或数据`;
+
+/**
+ * Build the GitHub Agent prompt.
+ * @param {object} params
+ * @param {string} params.query - User's query about their GitHub
+ * @param {string} [params.jd] - Current JD for matching (optional)
+ * @param {string} [params.githubUsername] - GitHub username (optional)
+ */
+export function getGithubAgentPrompt({ query, jd, githubUsername }) {
+  let user = query || '帮我看看 GitHub 上有什么可以写进简历的项目';
+  if (jd) {
+    user += `\n\n当前目标 JD（用于匹配参考）:\n${jd.slice(0, 2000)}`;
+  }
+  if (githubUsername) {
+    user += `\n\nGitHub 用户名: ${githubUsername}`;
+  }
+  return { system: GITHUB_AGENT_SYSTEM, user };
+}

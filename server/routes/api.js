@@ -4,8 +4,10 @@ import { initAnthropic, callAnthropic } from '../services/anthropic.js';
 import { initOpenAICompat, callOpenAICompat } from '../services/openai-compat.js';
 import { readFileContent, listResumeFiles } from '../services/fileReader.js';
 import { getLibraryDigest, appendToDigestCache, getAiPreprocessedLibrary, saveAiDigestCache, readRawLibraryFiles } from '../services/libraryCache.js';
-import { getResumeGenerationPrompt, getReviewPrompt, getReviewPromptConcise, getReviewMergePrompt, getHtmlGenerationPrompt, getApplyReviewPrompt, getLibraryPreprocessPrompt, getRouteIntentPrompt, getAnalyzeJdPrompt } from '../prompts/templates.js';
+import { getResumeGenerationPrompt, getReviewPrompt, getReviewPromptConcise, getReviewMergePrompt, getHtmlGenerationPrompt, getApplyReviewPrompt, getLibraryPreprocessPrompt, getRouteIntentPrompt, getAnalyzeJdPrompt, getGithubAgentPrompt } from '../prompts/templates.js';
 import { setPiiConfig, getPiiEntries, sanitizeRequestBody, sanitizeLibrary, sanitizeMessages, createStreamRestorer } from '../services/piiSanitizer.js';
+import * as mcpClient from '../services/mcp-client.js';
+import { runAgentLoop } from '../services/agent-loop.js';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -115,6 +117,7 @@ const MOCK = {
   html: '<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:24px 40px;font-size:10.5pt;line-height:1.4;color:#222}h1{text-align:center;font-size:20pt}</style></head><body><h1>吴坤</h1><p>[仿真测试模式] HTML预览</p></body></html>',
   extractJdInfo: '{"company":"Amazon","department":"AGS","title":"Senior Product Manager","language":"en"}',
   jdOcr: '岗位职责\n1. 参与美团小团Agent的产品功能优化和上线。\n2. 深入洞察用户需求与AI生成式能力。',
+  githubAgent: '## GitHub 项目分析报告\n\n[仿真测试] 以下为模拟分析结果，关闭仿真模式后将使用真实 GitHub 数据。\n\n### 推荐项目\n\n#### 1. resume-tailor (⭐ 128)\n- **描述**: AI 驱动的简历定制助手，支持多模型生成、评审、HTML 导出\n- **技术栈**: Node.js, Express, Vanilla JS, Anthropic SDK, Google GenAI\n- **推荐理由**: 全栈项目，展示了 AI 应用架构能力和产品思维\n- **简历建议**: "独立开发 AI 简历定制工具，集成多 LLM 供应商，实现流式生成 + 智能评审 + HTML 导出，用户可一键生成针对特定 JD 的定制简历"\n\n#### 2. distributed-cache (⭐ 56)\n- **描述**: 高性能分布式缓存系统，支持一致性哈希和自动故障转移\n- **技术栈**: Go, gRPC, Redis Protocol\n- **推荐理由**: 展示了分布式系统设计能力\n- **简历建议**: "设计并实现分布式缓存层，使用一致性哈希分片，支持自动故障转移，QPS 达 50K"\n\n### 总体评估\n- 活跃仓库: 12 个\n- 推荐写入简历: 2 个\n- 技术栈匹配度: 高\n\n> 建议：将上述项目加入素材库后重新生成简历，可以显著增强技术背景的说服力。',
 };
 
 function detectJdLanguage(text) {
@@ -1004,6 +1007,134 @@ router.post('/preprocess-library', async (req, res) => {
     }
   }
   res.end();
+});
+
+// ============================================================================
+// GitHub MCP Client Routes (M1)
+// ============================================================================
+
+// Read-only tools exposed to the LLM (no write operations)
+const GITHUB_READ_TOOLS = [
+  'search_repositories', 'get_file_contents', 'list_commits',
+  'search_code', 'search_issues', 'search_users',
+];
+
+/**
+ * POST /api/github/init
+ * Initialize the MCP Client with a GitHub token.
+ * Returns: { success, tools? }
+ */
+router.post('/github/init', async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ success: false, error: '需要提供 GitHub Token' });
+
+    await mcpClient.init(token);
+    const allTools = await mcpClient.listTools();
+    const readTools = allTools.filter(t => GITHUB_READ_TOOLS.includes(t.name));
+
+    res.json({ success: true, tools: readTools.map(t => ({ name: t.name, description: t.description })) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: `GitHub MCP 初始化失败: ${err.message}` });
+  }
+});
+
+/**
+ * GET /api/github/status
+ * Check MCP Client connection status.
+ */
+router.get('/github/status', (req, res) => {
+  res.json({ connected: mcpClient.isConnected() });
+});
+
+/**
+ * POST /api/github/analyze
+ * Run the GitHub Agent with tool-calling (SSE streaming).
+ * Request body: { model, query, jd, githubUsername, mock }
+ */
+router.post('/github/analyze', async (req, res) => {
+  const { model, query, jd, githubUsername, mock } = req.body;
+
+  // Mock mode
+  if (mock) {
+    await streamMock(res, MOCK.githubAgent);
+    res.end();
+    return;
+  }
+
+  setupSSE(res);
+
+  try {
+    // Ensure MCP client is connected
+    if (!mcpClient.isConnected()) {
+      throw new Error('GitHub MCP 未初始化，请先在设置中配置 GitHub Token 并点击连接');
+    }
+
+    // Get read-only tools
+    const allTools = await mcpClient.listTools();
+    const readTools = allTools.filter(t => GITHUB_READ_TOOLS.includes(t.name));
+
+    if (readTools.length === 0) {
+      throw new Error('GitHub MCP Server 未暴露可用的只读工具');
+    }
+
+    // Resolve model
+    const connectionId = normalizeConnectionId(model);
+    const sdkType = getSdkType(connectionId);
+    const caller = getModelCaller(connectionId);
+
+    // Build prompt
+    const { system, user } = getGithubAgentPrompt({ query, jd, githubUsername });
+
+    // Run agent loop
+    const result = await runAgentLoop({
+      caller,
+      sdkType,
+      system,
+      userMessage: user,
+      mcpTools: readTools,
+      executeTool: async (toolName, args) => {
+        try {
+          const toolResult = await mcpClient.callTool(toolName, args);
+          if (toolResult.isError) {
+            return `Error: ${toolResult.content?.map(c => c.text).join('\n') || 'Unknown error'}`;
+          }
+          return toolResult.content?.map(c => c.text).join('\n') || '';
+        } catch (err) {
+          return `Error calling tool ${toolName}: ${err.message}`;
+        }
+      },
+      onChunk: (text) => sendSSE(res, { type: 'chunk', text }),
+    });
+
+    sendSSE(res, {
+      type: 'done',
+      usage: result.usage,
+      model: connectionId,
+      iterations: result.iterations,
+      toolCallCount: result.toolCallHistory.length,
+    });
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    } else {
+      sendSSE(res, { type: 'error', message: err.message });
+    }
+  }
+  res.end();
+});
+
+/**
+ * POST /api/github/disconnect
+ * Close the MCP Client connection.
+ */
+router.post('/github/disconnect', async (req, res) => {
+  try {
+    await mcpClient.close();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // ============================================================================
