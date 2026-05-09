@@ -1132,7 +1132,7 @@ function bindEvents() {
     if (document.visibilityState === 'hidden') persistDraftState(true);
   });
   // Auto-resize chat textareas (max 300px)
-  for (const ta of [els.genChatInput, els.chatInput, els.htmlChatInput, els.preprocessChatInput]) {
+  for (const ta of [els.genChatInput, els.chatInput, els.htmlChatInput, els.preprocessChatInput, els.jdChatInput, els.githubChatInput]) {
     if (ta) ta.addEventListener('input', () => autoResize(ta, 300));
   }
   // Auto-resize instruction/JD textareas (max 600px)
