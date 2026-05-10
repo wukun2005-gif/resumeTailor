@@ -1032,9 +1032,14 @@ function persistInputs() {
 
 /* ── Events ── */
 function bindEvents() {
-  els.settingsBtn.addEventListener('click', () => els.settingsModal.classList.add('open'));
+  els.settingsBtn.addEventListener('click', () => { els.settingsModal.classList.add('open'); restoreSettingsTab(); });
   els.settingsClose.addEventListener('click', () => els.settingsModal.classList.remove('open'));
-  els.settingsModal.addEventListener('click', e => { if (e.target === els.settingsModal) els.settingsModal.classList.remove('open'); });
+  // U0: 点击弹窗外部区域不关闭弹窗（只有 X 按钮和"保存并连接"才能关闭）
+  els.settingsModal.addEventListener('click', e => { if (e.target === els.settingsModal) e.stopPropagation(); });
+  // U1: Tab 切换
+  document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchSettingsTab(tab.dataset.tab));
+  });
   // Remember details open/close state
   document.querySelectorAll('.remember-state').forEach(el => {
     el.addEventListener('toggle', persistDetailsState);
@@ -1406,6 +1411,18 @@ async function browseLibrary() {
   } catch (e) {
     if (e.name !== 'AbortError') alert('选择文件夹失败: ' + e.message);
   }
+}
+
+/* ── Settings Tabs ── */
+function switchSettingsTab(tabName) {
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+  document.querySelectorAll('.settings-tab-content').forEach(c => c.classList.toggle('active', c.dataset.tab === tabName));
+  state.set('settingsActiveTab', tabName);
+}
+
+function restoreSettingsTab() {
+  const saved = state.get('settingsActiveTab') || 'connections';
+  switchSettingsTab(saved);
 }
 
 /* ── Settings ── */

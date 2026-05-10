@@ -26,7 +26,16 @@
         <button class="btn-icon modal-close" id="settingsClose">✕</button>
       </div>
       <div class="modal-body">
-        <!-- Provider Connections -->
+        <!-- Tab Navigation -->
+        <div class="settings-tabs">
+          <button class="settings-tab active" data-tab="connections">模型连接</button>
+          <button class="settings-tab" data-tab="agents">Agent 分配</button>
+          <button class="settings-tab" data-tab="github">GitHub</button>
+          <button class="settings-tab" data-tab="privacy">隐私</button>
+        </div>
+
+        <!-- Tab: 模型连接 -->
+        <div class="settings-tab-content active" data-tab="connections">
         <fieldset>
           <legend>模型连接配置（凭证加密存储在本地浏览器中）</legend>
 
@@ -135,42 +144,23 @@
             </div>
           </details>
         </fieldset>
+        </div>
 
-        <!-- Agent Role Assignment -->
+        <!-- Tab: Agent 分配 -->
+        <div class="settings-tab-content" data-tab="agents">
         <fieldset>
           <legend>Agent 模型分配（从已配置的连接中选择）</legend>
           <div class="form-row">
             <label>Orchestrator（负责JD解析及合并审核的协调调度）</label>
             <select id="cfgAgentOrchestrator"></select>
-            <label class="reasoning-label">推理强度</label>
-            <select id="cfgReasoningOrchestrator" class="reasoning-select">
-              <option value="none">无</option>
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
-            </select>
           </div>
           <div class="form-row">
             <label>Generator（简历/求职信生成）</label>
             <select id="cfgAgentGenerator"></select>
-            <label class="reasoning-label">推理强度</label>
-            <select id="cfgReasoningGenerator" class="reasoning-select">
-              <option value="none">无</option>
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
-            </select>
           </div>
           <div class="form-row">
             <label>Reviewer（评审，可多选）</label>
             <div id="cfgAgentReviewers" class="checkbox-group"></div>
-            <label class="reasoning-label">推理强度</label>
-            <select id="cfgReasoningReviewer" class="reasoning-select">
-              <option value="none">无</option>
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
-            </select>
           </div>
           <div class="form-row">
             <label>Format Converter（HTML转换 / 图片OCR兜底）</label>
@@ -180,8 +170,41 @@
             <label>Preprocessor（素材库 AI 预处理）</label>
             <select id="cfgAgentPreprocessor"></select>
           </div>
+          <details class="collapsible" id="reasoningDetails">
+            <summary>高级选项：推理强度</summary>
+            <div class="form-row">
+              <label>Orchestrator 推理强度</label>
+              <select id="cfgReasoningOrchestrator" class="reasoning-select">
+                <option value="none">无</option>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Generator 推理强度</label>
+              <select id="cfgReasoningGenerator" class="reasoning-select">
+                <option value="none">无</option>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Reviewer 推理强度</label>
+              <select id="cfgReasoningReviewer" class="reasoning-select">
+                <option value="none">无</option>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+              </select>
+            </div>
+          </details>
         </fieldset>
+        </div>
 
+        <!-- Tab: GitHub -->
+        <div class="settings-tab-content" data-tab="github">
         <!-- GitHub MCP Integration -->
         <fieldset>
           <legend>GitHub 集成（MCP Client — 从 GitHub 仓库提取项目经历）</legend>
@@ -199,7 +222,10 @@
             <strong>可用工具:</strong> <span id="githubToolsList"></span>
           </div>
         </fieldset>
+        </div>
 
+        <!-- Tab: 隐私 -->
+        <div class="settings-tab-content" data-tab="privacy">
         <fieldset>
           <legend>隐私保护（PII 脱敏 — 发送AI前自动替换个人信息）</legend>
           <div class="form-row">
@@ -250,6 +276,7 @@
             </div>
           </div>
         </fieldset>
+        </div>
       </div>
         <span id="settingsStatus" class="status-text"></span>
         <button id="settingsSave" class="btn-primary">保存并连接</button>
