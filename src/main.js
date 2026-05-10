@@ -1034,7 +1034,6 @@ function persistInputs() {
 function bindEvents() {
   els.settingsBtn.addEventListener('click', () => els.settingsModal.classList.add('open'));
   els.settingsClose.addEventListener('click', () => els.settingsModal.classList.remove('open'));
-  els.settingsModal.addEventListener('click', e => { if (e.target === els.settingsModal) els.settingsModal.classList.remove('open'); });
   // Remember details open/close state
   document.querySelectorAll('.remember-state').forEach(el => {
     el.addEventListener('toggle', persistDetailsState);

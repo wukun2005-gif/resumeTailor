@@ -1312,6 +1312,7 @@ node test-e2e.mjs
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-05-10 | U0 设置弹窗交互修复：关闭按钮 sticky 定位（滚动时始终可见）；禁止点击外部区域关闭弹窗 | src/style.css, src/main.js | |
 | 2026-05-09 | M3 JD/GitHub 分析助手多轮对话 UI：新增 `jd-analyzer` 和 `github-analyzer` chatType 到 `/api/chat`；新增 `getJdAnalyzerChatSystem()` 和 `getGithubAnalyzerChatSystem()` 系统提示；前端新增 JD/GitHub 对话区（输入框+发送按钮+对话历史），分析完成后自动 seed 对话上下文，支持多轮追问；workspace 清理时重置对话状态 | server/prompts/templates.js, server/routes/api.js, src/main.js, index.html, test-e2e.mjs | |
 | 2026-05-09 | M4 GitHub MCP 自动重连：页面刷新/服务重启后 MCP 连接丢失时，`/github/analyze` 自动使用前端传入的 token 重新初始化 MCP Client；前端 `handleGithubAnalyze()` 从 localStorage 读取已保存的 token 并随请求发送 | server/routes/api.js, src/main.js, test-e2e.mjs, DESIGN.md | |
 | 2026-05-09 | M2 GitHub 用户名自动获取：MCP Client init 时通过 GitHub REST API `/user` 自动获取用户名并缓存；`/github/init` 和 `/github/status` 返回 `username` 字段；`/github/analyze` 自动注入用户名到 Agent prompt；前端连接成功后显示用户名 | server/services/mcp-client.js, server/routes/api.js, src/api.js, src/main.js, test-e2e.mjs, DESIGN.md | |
