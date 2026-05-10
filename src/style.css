@@ -118,6 +118,20 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
 .modal-body legend { font-size: 13px; font-weight: 600; padding: 0 6px; }
 .modal-footer { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-top: 1px solid #eee; }
 
+/* ── Settings Tabs ── */
+.settings-tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 2px solid #e5e7eb; padding-bottom: 0; }
+.settings-tab { padding: 8px 16px; font-size: 13px; font-weight: 500; color: #6b7280; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; transition: all 0.15s; }
+.settings-tab:hover { color: #374151; background: #f3f4f6; }
+.settings-tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+.settings-tab-content { display: none; }
+.settings-tab-content.active { display: block; }
+
+/* ── Advanced Options Toggle ── */
+.advanced-options-toggle { margin: 4px 0; }
+.btn-link { background: none; border: none; color: #2563eb; font-size: 12px; padding: 0; cursor: pointer; text-decoration: underline; }
+.btn-link:hover { color: #1d4ed8; }
+.advanced-options { margin-top: 8px; padding: 8px; background: #f8fafc; border-radius: 4px; border: 1px solid #e5e7eb; }
+
 /* ── Model Config Table ── */
 .model-config-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
 .model-config-table th { text-align: left; padding: 6px 8px; border-bottom: 2px solid #e5e7eb; font-weight: 600; color: #374151; font-size: 11px; white-space: nowrap; }

@@ -1034,6 +1034,29 @@ function persistInputs() {
 function bindEvents() {
   els.settingsBtn.addEventListener('click', () => els.settingsModal.classList.add('open'));
   els.settingsClose.addEventListener('click', () => els.settingsModal.classList.remove('open'));
+
+  // Settings tab switching
+  document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.settings-tab-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
+    });
+  });
+
+  // Advanced options toggle (reasoning intensity)
+  document.querySelectorAll('.advanced-options-toggle .btn-link').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const advancedDiv = btn.closest('.form-row').querySelector('.advanced-options');
+      if (advancedDiv) {
+        const isVisible = advancedDiv.style.display !== 'none';
+        advancedDiv.style.display = isVisible ? 'none' : 'block';
+        btn.textContent = isVisible ? '高级选项' : '收起高级选项';
+      }
+    });
+  });
+
   // Remember details open/close state
   document.querySelectorAll('.remember-state').forEach(el => {
     el.addEventListener('toggle', persistDetailsState);
