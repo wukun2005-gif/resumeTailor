@@ -694,8 +694,11 @@ GitHub Token 在设置弹窗中配置，使用 AES-256-GCM 加密存储（复用
 
 ### 设置弹窗
 - 宽度 820px (`.modal-wide`)
+- **Tab 切换**：4 个 tab（模型连接 / Agent 分配 / GitHub / 隐私），默认显示"模型连接"，tab 状态 localStorage 持久化
+- **关闭行为**：只有 X 按钮和"保存并连接"可关闭弹窗，点击外部区域不关闭
+- **Sticky Header**：`.modal-header` sticky 定位，滚动时标题栏和 X 按钮始终可见
 - **模型连接配置**：3 个可折叠的供应商区块，每块一个表格（模型类型 / URL / Key / Model ID）
-- **Agent 模型分配**：3 个选择器（Generator / Reviewer / Format Converter），从已配置连接中动态生成选项
+- **Agent 模型分配**：5 个选择器（Orchestrator / Generator / Reviewer / Format Converter / Preprocessor），从已配置连接中动态生成选项；推理强度下拉收入"高级选项"折叠区
 - 动态更新：用户在连接表中填入 API Key 后，Agent 分配区的下拉选项即时刷新
 
 ---
@@ -1312,6 +1315,7 @@ node test-e2e.mjs
 
 | 日期 | 简述 | 影响范围 | 关联 commit |
 |------|------|----------|-------------|
+| 2026-05-10 | U0/U1 设置弹窗交互修复 + tab 切换：modal-header sticky 定位、点击外部不关闭、4 tab 切换（模型连接/Agent分配/GitHub/隐私）、推理强度收入高级选项折叠区、tab 状态持久化 | index.html, src/main.js, src/style.css, DESIGN.md | |
 | 2026-05-09 | M3 JD/GitHub 分析助手多轮对话 UI：新增 `jd-analyzer` 和 `github-analyzer` chatType 到 `/api/chat`；新增 `getJdAnalyzerChatSystem()` 和 `getGithubAnalyzerChatSystem()` 系统提示；前端新增 JD/GitHub 对话区（输入框+发送按钮+对话历史），分析完成后自动 seed 对话上下文，支持多轮追问；workspace 清理时重置对话状态 | server/prompts/templates.js, server/routes/api.js, src/main.js, index.html, test-e2e.mjs | |
 | 2026-05-09 | M4 GitHub MCP 自动重连：页面刷新/服务重启后 MCP 连接丢失时，`/github/analyze` 自动使用前端传入的 token 重新初始化 MCP Client；前端 `handleGithubAnalyze()` 从 localStorage 读取已保存的 token 并随请求发送 | server/routes/api.js, src/main.js, test-e2e.mjs, DESIGN.md | |
 | 2026-05-09 | M2 GitHub 用户名自动获取：MCP Client init 时通过 GitHub REST API `/user` 自动获取用户名并缓存；`/github/init` 和 `/github/status` 返回 `username` 字段；`/github/analyze` 自动注入用户名到 Agent prompt；前端连接成功后显示用户名 | server/services/mcp-client.js, server/routes/api.js, src/api.js, src/main.js, test-e2e.mjs, DESIGN.md | |
